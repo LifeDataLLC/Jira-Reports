@@ -1,0 +1,32 @@
+# Secrets / config — never commit credentials
+.env
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local data / snapshots (future SQLite trend history)
+*.sqlite3
+*.db
+data/
+jira_data/
+
+# Generated report outputs
+*.xlsx
+*.csv
+!sample_*.csv
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
