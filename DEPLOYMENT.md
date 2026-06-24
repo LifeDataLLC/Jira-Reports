@@ -21,6 +21,7 @@ The three `JIRA_*` secrets are deliberately NOT in the repo, so they must be set
 | `JIRA_API_TOKEN` | read-only Jira API token |
 | `JIRA_PROJECTS` | `LIFEDATAV2` (optional) |
 | `JIRA_WINDOW_DAYS` | `14` (optional) |
+| `JIRA_CACHE_TTL` | `300` seconds (optional) — how long fetched Jira data is cached in memory. Raise it to make pages snappier at the cost of freshness; set `0` to disable caching. |
 
 ### 2. Startup Command (Configuration → General settings → Startup Command)
 

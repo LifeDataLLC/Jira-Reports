@@ -15,7 +15,10 @@ Read-only scopes are sufficient: reading issues + searching. No write access nee
 from __future__ import annotations
 
 import datetime as dt
+import functools
 import os
+import threading
+import time
 from dataclasses import dataclass, field
 from statistics import mean, median
 from typing import Any
@@ -34,6 +37,49 @@ JIRA_API_TOKEN = os.environ.get("JIRA_API_TOKEN", "")
 # Which project(s) to report on, and how far back "recent activity" looks.
 PROJECT_KEYS = os.environ.get("JIRA_PROJECTS", "LIFEDATAV2").split(",")
 WINDOW_DAYS = int(os.environ.get("JIRA_WINDOW_DAYS", "14"))
+
+
+# ---------------------------------------------------------------------------
+# Lightweight TTL cache
+# ---------------------------------------------------------------------------
+# Jira fetches are the slow part of every page (each issue is pulled WITH its
+# changelog, paged at 100/issue). Several report routes call the fetch_* helpers
+# below on every request. This argument-keyed cache holds each result for
+# JIRA_CACHE_TTL seconds so repeat/concurrent loads are served from memory
+# instead of re-hitting Jira. Set JIRA_CACHE_TTL=0 to disable.
+
+CACHE_TTL = int(os.environ.get("JIRA_CACHE_TTL", "300"))
+_cache_lock = threading.Lock()
+_cache_store: dict[Any, tuple[float, Any]] = {}
+
+
+def _cached(fn):
+    """Cache a fetch helper's return value by its arguments for CACHE_TTL seconds.
+
+    The wrapped function runs outside the lock, so a slow Jira call never blocks
+    other requests; at worst two concurrent misses both fetch, which is harmless.
+    """
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        if CACHE_TTL <= 0:
+            return fn(*args, **kwargs)
+        key = (fn.__name__, args, tuple(sorted(kwargs.items())))
+        now = time.time()
+        with _cache_lock:
+            hit = _cache_store.get(key)
+            if hit and now - hit[0] < CACHE_TTL:
+                return hit[1]
+        result = fn(*args, **kwargs)
+        with _cache_lock:
+            _cache_store[key] = (time.time(), result)
+        return result
+    return wrapper
+
+
+def clear_cache() -> None:
+    """Drop all cached fetches (e.g. to force a fresh pull)."""
+    with _cache_lock:
+        _cache_store.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +134,7 @@ REPORT_FIELDS = ["summary", "status", "assignee", "issuetype", "priority",
                  "created", "resolutiondate", "fixVersions", "updated"]
 
 
+@_cached
 def fetch_working_set(window_days: int | None = None) -> list[dict]:
     """
     One broad pull for the executive reports: every issue in the configured projects
@@ -102,6 +149,7 @@ def fetch_working_set(window_days: int | None = None) -> list[dict]:
     return search_issues(jql, REPORT_FIELDS, expand_changelog=True)
 
 
+@_cached
 def fetch_issues_by_time(time_clause: str) -> list[dict]:
     """
     Fetch issues (with changelog) matching a JQL time clause, e.g.
@@ -113,6 +161,7 @@ def fetch_issues_by_time(time_clause: str) -> list[dict]:
     return search_issues(jql, REPORT_FIELDS, expand_changelog=True)
 
 
+@_cached
 def fetch_project_versions() -> list[dict]:
     out = []
     for p in PROJECT_KEYS:
@@ -124,12 +173,14 @@ def fetch_project_versions() -> list[dict]:
     return out
 
 
+@_cached
 def fetch_issues_for_version(version_name: str) -> list[dict]:
     projects = " ,".join(f'"{p.strip()}"' for p in PROJECT_KEYS)
     jql = f'project in ({projects}) AND fixVersion = "{version_name}"'
     return search_issues(jql, REPORT_FIELDS, expand_changelog=False)
 
 
+@_cached
 def fetch_active_sprints() -> list[dict]:
     """Active sprints + their issues, for the Sprint Health report. Requires
     JIRA_BOARD_IDS to be configured; returns [] otherwise (report degrades gracefully)."""
