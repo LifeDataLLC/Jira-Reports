@@ -43,6 +43,56 @@ def fmt(v, s="d"):
 # Shared chrome (CSS + nav)
 # ---------------------------------------------------------------------------
 
+# Full-screen loading overlay. Shown via JS the instant the user clicks an
+# internal link or submits a filter form, so the (server-rendered, Jira-backed)
+# pages give immediate feedback while the data is fetched. It is part of every
+# page's markup but stays hidden until triggered; the next page load replaces
+# the document, which clears it. Imported by app.py so the v0 pages match.
+LOADING_OVERLAY = """
+<div id="loadingOverlay" aria-hidden="true" role="status">
+  <div class="lo-box">
+    <div class="lo-spinner"></div>
+    <div class="lo-text">We are loading your report…</div>
+    <div class="lo-sub">Pulling the latest data from Jira</div>
+  </div>
+</div>
+<style>
+ #loadingOverlay{position:fixed;inset:0;z-index:9999;display:none;align-items:center;
+   justify-content:center;background:rgba(244,245,247,.85);-webkit-backdrop-filter:blur(2px);
+   backdrop-filter:blur(2px)}
+ #loadingOverlay.show{display:flex}
+ #loadingOverlay .lo-box{text-align:center;background:#fff;padding:30px 42px;border-radius:12px;
+   box-shadow:0 6px 24px rgba(9,30,66,.18)}
+ #loadingOverlay .lo-spinner{width:44px;height:44px;margin:0 auto 16px;border:4px solid #dfe7f5;
+   border-top-color:#0052cc;border-radius:50%;animation:lo-spin .8s linear infinite}
+ #loadingOverlay .lo-text{font-size:16px;font-weight:600;color:#172b4d}
+ #loadingOverlay .lo-sub{font-size:13px;color:#6b778c;margin-top:4px}
+ @keyframes lo-spin{to{transform:rotate(360deg)}}
+ @media (prefers-reduced-motion:reduce){ #loadingOverlay .lo-spinner{animation-duration:2s}}
+</style>
+<script>
+(function(){
+  function ov(){return document.getElementById('loadingOverlay');}
+  function show(){var o=ov();if(o)o.classList.add('show');}
+  function hide(){var o=ov();if(o)o.classList.remove('show');}
+  // Back/forward cache restore should not leave the spinner up.
+  window.addEventListener('pageshow',function(e){if(e.persisted)hide();});
+  document.addEventListener('click',function(e){
+    var a=e.target.closest?e.target.closest('a'):null;
+    if(!a)return;
+    var href=a.getAttribute('href')||'';
+    if(a.target==='_blank'||a.hasAttribute('download'))return;
+    if(href===''||href.charAt(0)==='#')return;
+    if(a.host&&a.host!==location.host)return;            // external link
+    if(e.metaKey||e.ctrlKey||e.shiftKey||e.altKey||e.button!==0)return; // open-in-new-tab
+    show();
+  });
+  document.addEventListener('submit',function(){show();});  // filter/timeframe forms
+})();
+</script>
+"""
+
+
 TOP = """
 <style>
  body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;margin:0;color:#172b4d;background:#f4f5f7}
@@ -78,6 +128,7 @@ TOP = """
  <a href="/reports/sprints">Sprints</a>
  <a href="/">Workload (v0)</a>
 </nav>
+""" + LOADING_OVERLAY + """
 <div class="wrap">
 """
 BOT = "</div>"

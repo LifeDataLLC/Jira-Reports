@@ -81,7 +81,7 @@ BASE_CSS = """
   .toolbar { margin-bottom: 16px; }
   .btn { background:#0052cc;color:#fff;padding:8px 14px;border-radius:6px;font-size:13px; }
 </style>
-"""
+""" + reports_web.LOADING_OVERLAY
 
 OVERVIEW_TMPL = BASE_CSS + """
 <header>
