@@ -248,26 +248,40 @@ def qa():
 
 SD = """
 <h1>Status Duration Analysis</h1>
-<div class="sub">Where tickets spend time, and the current worst offenders</div>
-<h2>Average time per stage</h2>
+<div class="sub">Average time tickets accrued in each stage during the <b>{{ label }}</b> · the worst-offenders list below is a live snapshot</div>
+<div class="sectionbox">
+  <a class="pill {{ 'ok' if params.range=='24h' else '' }}" href="?range=24h">Past 24h</a>
+  <a class="pill {{ 'ok' if params.range=='7d' else '' }}" href="?range=7d">Past 7 days</a>
+  <a class="pill {{ 'ok' if params.range=='30d' else '' }}" href="?range=30d">Past month</a>
+  <form method="get" style="display:inline-block;margin-left:14px">
+    <input type="hidden" name="range" value="custom">
+    From <input type="date" name="from" value="{{ params.get('from','') }}">
+    To <input type="date" name="to" value="{{ params.get('to','') }}">
+    <button class="pill" type="submit">Apply range</button>
+  </form>
+</div>
+<h2>Average time per stage — {{ label }}</h2>
 <table><tr><th>Stage</th><th>Avg days</th><th>Median days</th><th>Tickets</th></tr>
 {% for r in d.rows %}
 <tr><td>{{ r.stage }}</td><td>{{ r.avg_days }}</td><td>{{ r.median_days }}</td><td>{{ r.tickets }}</td></tr>
-{% endfor %}
+{% else %}<tr><td colspan="4" class="muted">No stage time accrued in this timeframe.</td></tr>{% endfor %}
 </table>
 <h2>Currently stuck the longest</h2>
 <table><tr><th>Key</th><th>Summary</th><th>Stage</th><th>Days in stage</th><th>Assignee</th></tr>
 {% for i in d.offenders %}
 <tr><td><a href="{{ i.url }}" target="_blank">{{ i.key }}</a></td><td>{{ i.summary }}</td>
 <td>{{ i.stage }}</td><td>{{ fmt(i.timeline.days_in_stage(i.stage)) }}</td><td>{{ i.assignee }}</td></tr>
-{% endfor %}
+{% else %}<tr><td colspan="5" class="muted">Nothing currently open.</td></tr>{% endfor %}
 </table>
 """
 
 
 @bp.route("/reports/status-duration")
 def status_duration():
-    return page(SD, d=R.status_duration(dataset()))
+    start, end, label, _mode, params, fetch_jql = _window_spec(request.args)
+    issues = R.load_issues(jc.fetch_issues_by_time(fetch_jql))
+    return page(SD, d=R.status_duration(issues, window=(start, end)),
+                label=label, params=params)
 
 
 # ---------------------------------------------------------------------------

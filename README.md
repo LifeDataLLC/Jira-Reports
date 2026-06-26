@@ -66,7 +66,7 @@ like *"In Progress / Start Investigation"* are handled automatically.
 | `/reports/daily` | Daily Work Movement — created/started/dev-done/QA-done/blocked today |
 | `/reports/developers` | Developer Productivity — output, dev duration, reopened, quality score |
 | `/reports/qa` | QA Productivity — verified, rejection rate, testing duration |
-| `/reports/status-duration` | Status Duration Analysis — average time per stage + worst offenders |
+| `/reports/status-duration` | Status Duration Analysis — average/median time per stage for a chosen timeframe (24h / 7d / month / custom range) + current worst offenders |
 | `/reports/time-in-status` | Per-ticket time in each status for a timeframe (24h / 7d / 30d / custom range). Two modes: **In-window** (only time accrued inside the window — default) and **Lifetime** (total per status). CSV export at `/reports/time-in-status.csv` |
 | `/reports/release?version=...` | Release Readiness — completion %, open bugs, risk score |
 | `/reports/sprints` | Sprint Health — needs `JIRA_BOARD_IDS` configured |

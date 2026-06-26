@@ -116,6 +116,19 @@ class Timeline:
                 out[status] = out.get(status, 0) + (b - a).total_seconds()
         return out
 
+    def seconds_in_stage_window(self, start, end):
+        """Time accrued in each STAGE inside [start, end) — the windowed analog of
+        seconds_in_stage. Lets Status Duration report 'time spent per stage during the
+        last 24h / week / month' instead of lifetime totals."""
+        out = {}
+        for status, enter, exit_ in self.segments:
+            a = max(enter, start)
+            b = min(exit_, end)
+            if b > a:
+                stage = cfg.stage_of(status)
+                out[stage] = out.get(stage, 0) + (b - a).total_seconds()
+        return out
+
     @property
     def first_active(self):
         entries = [self.stage_first_entry.get(s) for s in cfg.ACTIVE_STAGES]

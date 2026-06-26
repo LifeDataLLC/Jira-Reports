@@ -231,11 +231,22 @@ def individual_activity(issues, person, days_back=30, now=None):
 # Report 6 — Status Duration Analysis
 # ---------------------------------------------------------------------------
 
-def status_duration(issues):
+def status_duration(issues, window=None):
+    """Average/median time per stage, plus the current worst offenders.
+
+    window=None       -> lifetime time per stage (every ticket's full history).
+    window=(start,end) -> only the time each ticket accrued in each stage INSIDE the
+                          window, so the page can show "past 24h / 7d / month / range".
+    The offenders list is always a *current* snapshot (how long open tickets have sat
+    in their present stage), independent of the window.
+    """
     per_stage = {}
     for i in issues:
-        for stage, secs in i.timeline.seconds_in_stage.items():
-            per_stage.setdefault(stage, []).append(secs / 86400)
+        secs_map = (i.timeline.seconds_in_stage_window(window[0], window[1])
+                    if window else i.timeline.seconds_in_stage)
+        for stage, secs in secs_map.items():
+            if secs > 0:
+                per_stage.setdefault(stage, []).append(secs / 86400)
     rows = []
     for stage in cfg.STAGE_ORDER:
         vals = per_stage.get(stage)
