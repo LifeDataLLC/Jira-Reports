@@ -366,6 +366,9 @@ def sprints():
 INDIV = """
 <h1>Individual Activity — {{ d.person }}</h1>
 <div class="sub">Last {{ d.window_days }} days</div>
+<div class="sectionbox" style="padding:10px 14px">
+  <a class="pill" href="{{ request.path }}/report.csv?days={{ d.window_days }}">⬇ Download CSV</a>
+</div>
 <div class="cards">
  <div class="card"><div class="n">{{ d.assigned }}</div><div class="l">Assigned</div></div>
  <div class="card"><div class="n">{{ d.completed }}</div><div class="l">Completed</div></div>
@@ -392,6 +395,35 @@ INDIV = """
 def individual(person):
     win = int(request.args.get("days", 30))
     return page(INDIV, d=R.individual_activity(dataset(), person, win))
+
+
+@bp.route("/reports/individual/<person>/report.csv")
+def individual_csv(person):
+    win = int(request.args.get("days", 30))
+    d = R.individual_activity(dataset(), person, win)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow([f"Individual Activity — {d['person']}"])
+    w.writerow([f"Last {d['window_days']} days"])
+    w.writerow([])
+    w.writerow(["Summary", "Value"])
+    w.writerow(["Assigned", d["assigned"]])
+    w.writerow(["Completed", d["completed"]])
+    w.writerow(["Open", d["open"]])
+    w.writerow(["Active days (elapsed)", d["active_days_total"]])
+    w.writerow([])
+    w.writerow(["Completed tickets"])
+    w.writerow(["Key", "Summary", "Cycle days", "URL"])
+    for i in d["completed_list"]:
+        w.writerow([i.key, i.summary, i.timeline.cycle_days, i.url])
+    w.writerow([])
+    w.writerow(["Open tickets"])
+    w.writerow(["Key", "Summary", "Stage", "Days in stage", "URL"])
+    for i in d["open_list"]:
+        w.writerow([i.key, i.summary, i.stage, i.timeline.days_in_stage(i.stage), i.url])
+    safe = "".join(c if c.isalnum() else "_" for c in d["person"]).strip("_") or "developer"
+    return Response(buf.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename=individual_{safe}.csv"})
 
 
 # ---------------------------------------------------------------------------

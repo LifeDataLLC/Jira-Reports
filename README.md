@@ -70,7 +70,7 @@ like *"In Progress / Start Investigation"* are handled automatically.
 | `/reports/time-in-status` | Per-ticket time in each status for a timeframe (24h / 7d / 30d / custom range). Two modes: **In-window** (only time accrued inside the window — default) and **Lifetime** (total per status). CSV export at `/reports/time-in-status.csv` |
 | `/reports/release?version=...` | Release Readiness — completion %, open bugs, risk score |
 | `/reports/sprints` | Sprint Health — needs `JIRA_BOARD_IDS` configured |
-| `/reports/individual/<name>` | Individual Activity — one person's full history |
+| `/reports/individual/<name>` | Individual Activity — one person's full history. CSV download at `/reports/individual/<name>/report.csv` |
 | `/api/reports.json` | All report data as JSON |
 
 ### Configuration for the executive reports
