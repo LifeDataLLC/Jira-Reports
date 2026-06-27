@@ -211,17 +211,29 @@ def qa_productivity(issues, days_back=14, now=None):
 # Report 6 — Status Duration Analysis
 # ---------------------------------------------------------------------------
 
-def status_duration(issues, window=None):
+def status_duration(issues, window=None, exclude_stuck_days=None):
     """Average/median time per stage, plus the current worst offenders.
 
     window=None       -> lifetime time per stage (every ticket's full history).
     window=(start,end) -> only the time each ticket accrued in each stage INSIDE the
                           window, so the page can show "past 24h / 7d / month / range".
+    exclude_stuck_days -> if set, open tickets currently sitting in their present stage
+                          for >= this many days are dropped from the per-stage averages
+                          (so a few languishing tickets don't skew the typical-flow
+                          numbers). The offenders list below is left untouched.
     The offenders list is always a *current* snapshot (how long open tickets have sat
     in their present stage), independent of the window.
     """
+    def is_stuck(i):
+        return (exclude_stuck_days is not None and i.is_open
+                and (i.timeline.days_in_stage(i.stage) or 0) >= exclude_stuck_days)
+
     per_stage = {}
+    excluded = 0
     for i in issues:
+        if is_stuck(i):
+            excluded += 1
+            continue
         secs_map = (i.timeline.seconds_in_stage_window(window[0], window[1])
                     if window else i.timeline.seconds_in_stage)
         for stage, secs in secs_map.items():
@@ -237,7 +249,8 @@ def status_duration(issues, window=None):
     offenders = sorted(
         [i for i in issues if i.is_open],
         key=lambda i: (i.timeline.days_in_stage(i.stage) or 0), reverse=True)[:15]
-    return {"rows": rows, "offenders": offenders}
+    return {"rows": rows, "offenders": offenders,
+            "excluded_stuck": excluded, "exclude_stuck_days": exclude_stuck_days}
 
 
 # ---------------------------------------------------------------------------

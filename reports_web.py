@@ -249,16 +249,22 @@ def qa():
 
 SD = """
 <h1>Status Duration Analysis</h1>
-<div class="sub">Average time tickets accrued in each stage during the <b>{{ label }}</b> · the worst-offenders list below is a live snapshot</div>
+<div class="sub">Average time tickets accrued in each stage during the <b>{{ label }}</b>{% if d.exclude_stuck_days %} · excluding {{ d.excluded_stuck }} ticket(s) stuck {{ d.exclude_stuck_days }}+ days{% endif %} · the worst-offenders list below is a live snapshot</div>
 <div class="sectionbox">
-  <a class="pill {{ 'ok' if params.range=='24h' else '' }}" href="?range=24h">Past 24h</a>
-  <a class="pill {{ 'ok' if params.range=='7d' else '' }}" href="?range=7d">Past 7 days</a>
-  <a class="pill {{ 'ok' if params.range=='30d' else '' }}" href="?range=30d">Past month</a>
+  <a class="pill {{ 'ok' if params.range=='24h' else '' }}" href="?range=24h{{ ex }}">Past 24h</a>
+  <a class="pill {{ 'ok' if params.range=='7d' else '' }}" href="?range=7d{{ ex }}">Past 7 days</a>
+  <a class="pill {{ 'ok' if params.range=='30d' else '' }}" href="?range=30d{{ ex }}">Past month</a>
   <form method="get" style="display:inline-block;margin-left:14px">
     <input type="hidden" name="range" value="custom">
+    {% if params.exclude_stuck %}<input type="hidden" name="exclude_stuck" value="1">{% endif %}
     From <input type="date" name="from" value="{{ params.get('from','') }}">
     To <input type="date" name="to" value="{{ params.get('to','') }}">
     <button class="pill" type="submit">Apply range</button>
+  </form>
+  <form method="get" style="display:inline-block;margin-left:14px">
+    <input type="hidden" name="range" value="{{ params.range }}">
+    {% if params.range=='custom' %}<input type="hidden" name="from" value="{{ params.get('from','') }}"><input type="hidden" name="to" value="{{ params.get('to','') }}">{% endif %}
+    <label class="pill {{ 'ok' if params.exclude_stuck else '' }}" style="cursor:pointer"><input type="checkbox" name="exclude_stuck" value="1" {% if params.exclude_stuck %}checked{% endif %} onchange="this.form.submit()" style="vertical-align:middle;margin-right:4px">Exclude tickets stuck {{ stuck_days }}+ days</label>
   </form>
 </div>
 <h2>Average time per stage — {{ label }}</h2>
@@ -280,9 +286,15 @@ SD = """
 @bp.route("/reports/status-duration")
 def status_duration():
     start, end, label, _mode, params, fetch_jql = _window_spec(request.args)
+    stuck_days = 10
+    exclude = request.args.get("exclude_stuck") in ("1", "true", "on")
     issues = R.load_issues(jc.fetch_issues_by_time(fetch_jql))
-    return page(SD, d=R.status_duration(issues, window=(start, end)),
-                label=label, params=params)
+    d = R.status_duration(issues, window=(start, end),
+                          exclude_stuck_days=stuck_days if exclude else None)
+    params = dict(params)
+    params["exclude_stuck"] = "1" if exclude else ""
+    ex = "&exclude_stuck=1" if exclude else ""
+    return page(SD, d=d, label=label, params=params, stuck_days=stuck_days, ex=ex)
 
 
 # ---------------------------------------------------------------------------
