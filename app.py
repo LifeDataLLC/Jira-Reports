@@ -80,7 +80,26 @@ BASE_CSS = """
   .muted { color: #6b778c; font-size: 13px; }
   h2 { font-size: 16px; margin: 28px 0 10px; }
   .toolbar { margin-bottom: 16px; }
-  .btn { background:#0052cc;color:#fff;padding:8px 14px;border-radius:6px;font-size:13px; }
+  .btn { background:#0052cc;color:#fff;padding:8px 14px;border-radius:6px;font-size:13px;border:none;cursor:pointer;display:inline-block;text-decoration:none; }
+  .btn:hover { background:#0747a6;text-decoration:none; }
+  /* ---- filter bar ---- */
+  .filterbar { background:#fff;border:1px solid #e3e6ea;border-radius:10px;margin-bottom:22px;box-shadow:0 1px 3px rgba(9,30,66,.12);overflow:hidden; }
+  .filterbar-head { display:flex;align-items:center;justify-content:space-between;padding:11px 18px;border-bottom:1px solid #ebecf0;background:#fafbfc; }
+  .filterbar-head h3 { margin:0;font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#5e6c84; }
+  .filter-body { padding:6px 18px; }
+  .filter-group { display:flex;align-items:flex-start;gap:16px;padding:11px 0; }
+  .filter-group + .filter-group { border-top:1px dashed #ebecf0; }
+  .filter-key { min-width:110px;font-size:13px;font-weight:600;color:#172b4d;padding-top:6px; }
+  .chips { display:flex;flex-wrap:wrap;gap:8px;flex:1; }
+  .chip { display:inline-flex;align-items:center;gap:7px;padding:5px 12px;border:1px solid #dfe1e6;border-radius:18px;cursor:pointer;font-size:13px;color:#42526e;background:#fff;transition:background .12s,border-color .12s,color .12s;user-select:none; }
+  .chip:hover { border-color:#9fb3d1; }
+  .chip input { accent-color:#0052cc;width:14px;height:14px;margin:0;cursor:pointer; }
+  .chip:has(input:checked) { background:#e6effd;border-color:#4c9aff;color:#0747a6;font-weight:600; }
+  .num-input { width:66px;padding:6px 8px;border:1px solid #dfe1e6;border-radius:6px;font-size:13px; }
+  .num-input:focus { outline:none;border-color:#4c9aff;box-shadow:0 0 0 2px rgba(76,154,255,.25); }
+  .filter-actions { display:flex;align-items:center;gap:10px;padding:11px 18px;border-top:1px solid #ebecf0;background:#fafbfc; }
+  .btn-ghost { background:#fff;color:#42526e;border:1px solid #dfe1e6;padding:7px 14px;border-radius:6px;font-size:13px;cursor:pointer;text-decoration:none;display:inline-block; }
+  .btn-ghost:hover { background:#f4f5f7;border-color:#b3bac5;text-decoration:none; }
 </style>
 """ + reports_web.LOADING_OVERLAY
 
@@ -130,23 +149,38 @@ DEV_TMPL = BASE_CSS + """
   <div class="sub"><a href="/" style="color:#cfe0ff">&larr; All developers</a></div>
 </header>
 <div class="wrap">
-  <form method="get" style="background:#fff;border-radius:8px;padding:14px 16px;box-shadow:0 1px 3px rgba(9,30,66,.12);margin-bottom:20px">
-    <div style="margin-bottom:6px"><b>Ticket type:</b>
-      {% for t in avail_types %}
-      <label style="margin:0 10px 0 2px"><input type="checkbox" name="type" value="{{ t }}" {% if t in sel_types %}checked{% endif %}> {{ t }}</label>
-      {% else %}<span class="muted">none</span>{% endfor %}
+  <form method="get" class="filterbar">
+    <div class="filterbar-head">
+      <h3>Filters</h3>
+      <a class="btn-ghost" href="{{ request.path }}/report.csv?{{ request.query_string.decode() }}" download>⬇ Download CSV</a>
     </div>
-    <div style="margin-bottom:6px"><b>Status:</b>
-      {% for s in avail_statuses %}
-      <label style="margin:0 10px 0 2px"><input type="checkbox" name="status" value="{{ s }}" {% if s in sel_statuses %}checked{% endif %}> {{ s }}</label>
-      {% else %}<span class="muted">none</span>{% endfor %}
+    <div class="filter-body">
+      <div class="filter-group">
+        <div class="filter-key">Ticket type</div>
+        <div class="chips">
+          {% for t in avail_types %}
+          <label class="chip"><input type="checkbox" name="type" value="{{ t }}" {% if t in sel_types %}checked{% endif %}>{{ t }}</label>
+          {% else %}<span class="muted">none</span>{% endfor %}
+        </div>
+      </div>
+      <div class="filter-group">
+        <div class="filter-key">Status</div>
+        <div class="chips">
+          {% for s in avail_statuses %}
+          <label class="chip"><input type="checkbox" name="status" value="{{ s }}" {% if s in sel_statuses %}checked{% endif %}>{{ s }}</label>
+          {% else %}<span class="muted">none</span>{% endfor %}
+        </div>
+      </div>
+      <div class="filter-group">
+        <div class="filter-key">Min open age</div>
+        <div class="chips" style="align-items:center">
+          <input type="number" name="min_age" min="0" value="{{ min_age }}" class="num-input"> <span class="muted">days</span>
+        </div>
+      </div>
     </div>
-    <div>
-      <b>Min open age (days):</b>
-      <input type="number" name="min_age" min="0" value="{{ min_age }}" style="width:64px">
+    <div class="filter-actions">
       <button class="btn" type="submit">Apply filters</button>
-      <a class="pill" href="{{ request.path }}">Clear</a>
-      <a class="pill" style="float:right" href="{{ request.path }}/report.csv?{{ request.query_string.decode() }}" download>⬇ Download CSV</a>
+      <a class="btn-ghost" href="{{ request.path }}">Clear</a>
     </div>
   </form>
   <div class="cards">
