@@ -159,16 +159,18 @@ DEV_TMPL = BASE_CSS + """
 
   <h2>In progress</h2>
   <table>
-    <tr><th>Key</th><th>Summary</th><th>Current status</th><th>Days in status</th></tr>
+    <tr><th>Key</th><th>Summary</th><th>Current status</th><th>Days in status</th><th>Time in progress</th></tr>
     {% for t in d.in_progress %}
     <tr>
       <td><a href="{{ t.url }}" target="_blank">{{ t.key }}</a></td>
       <td>{{ t.summary }}</td>
       <td>{{ t.status }}</td>
       <td>{% if t.days_in_status and t.days_in_status > 14 %}<span class="pill warn">{{ fmt(t.days_in_status) }}</span>{% else %}{{ fmt(t.days_in_status) }}{% endif %}</td>
+      <td>{{ fmt(t.active_days) }}</td>
     </tr>
-    {% else %}<tr><td colspan="4" class="muted">Nothing in progress.</td></tr>{% endfor %}
+    {% else %}<tr><td colspan="5" class="muted">Nothing in progress.</td></tr>{% endfor %}
   </table>
+  <p class="muted"><b>Days in status</b> = time in the current status (aging). <b>Time in progress</b> = total time the ticket has spent in active/in-progress stages — how long it's actually been worked, excluding paused/blocked time.</p>
 
   <h2>Completed</h2>
   <table>
@@ -300,9 +302,10 @@ def developer_csv(name):
     w.writerow(["Median cycle (days)", fd.median_cycle])
     w.writerow([])
     w.writerow(["In progress"])
-    w.writerow(["Key", "Summary", "Status", "Days in status", "URL"])
+    w.writerow(["Key", "Summary", "Status", "Days in current status",
+                "Time in progress (days)", "URL"])
     for t in fd.in_progress:
-        w.writerow([t.key, t.summary, t.status, t.days_in_status, t.url])
+        w.writerow([t.key, t.summary, t.status, t.days_in_status, t.active_days, t.url])
     w.writerow([])
     w.writerow(["Completed"])
     w.writerow(["Key", "Summary", "Type", "Lead days", "Cycle days", "URL"])
