@@ -62,6 +62,13 @@ class Issue:
     def is_bug(self):
         return self.type.lower() == "bug"
 
+    @property
+    def age_days(self):
+        """Calendar days since the ticket was created (its open age)."""
+        if not self.created:
+            return None
+        return round((A.now_utc() - self.created).total_seconds() / 86400, 1)
+
 
 def load_issues(raw_list) -> list[Issue]:
     issues = []
@@ -211,19 +218,42 @@ def qa_productivity(issues, days_back=14, now=None):
 # Report 5 — Individual Activity
 # ---------------------------------------------------------------------------
 
-def individual_activity(issues, person, days_back=30, now=None):
+def individual_activity(issues, person, days_back=30, now=None,
+                        types=None, statuses=None, min_open_age=0):
+    """One person's activity, optionally filtered.
+
+    types        -> keep only these issue types (e.g. {"Bug","Story"}); empty = all.
+    statuses     -> keep only these raw statuses; empty = all.
+    min_open_age -> drop open tickets younger than this many days (their open age).
+
+    The available type/status options returned for the filter UI come from the
+    person's full (unfiltered) set so toggling a filter never hides the control.
+    """
+    now = now or A.now_utc()
     start, end = window_bounds(days_back, now)
-    assigned = [i for i in issues if i.assignee == person]
-    completed = [i for i in assigned if i.resolved and start <= i.resolved < end]
-    open_issues = [i for i in assigned if i.is_open]
+    mine_all = [i for i in issues if i.assignee == person]
+    avail_types = sorted({i.type for i in mine_all if i.type})
+    avail_statuses = sorted({i.status for i in mine_all if i.status})
+
+    tset, sset = set(types or []), set(statuses or [])
+    mine = [i for i in mine_all
+            if (not tset or i.type in tset) and (not sset or i.status in sset)]
+
+    completed = [i for i in mine if i.resolved and start <= i.resolved < end]
+    open_issues = [i for i in mine if i.is_open]
+    if min_open_age > 0:
+        open_issues = [i for i in open_issues if (i.age_days or 0) >= min_open_age]
+
     active_secs = sum(sum(i.timeline.seconds_in_stage.get(s, 0) for s in cfg.ACTIVE_STAGES)
                       for i in completed)
     return {
         "person": person, "window_days": days_back,
-        "assigned": len(assigned), "completed": len(completed), "open": len(open_issues),
+        "assigned": len(mine), "completed": len(completed), "open": len(open_issues),
         "active_days_total": round(active_secs / 86400, 1),
         "completed_list": sorted(completed, key=lambda i: i.resolved or A.now_utc(), reverse=True),
-        "open_list": open_issues,
+        "open_list": sorted(open_issues, key=lambda i: i.age_days or 0, reverse=True),
+        "avail_types": avail_types, "avail_statuses": avail_statuses,
+        "sel_types": sorted(tset), "sel_statuses": sorted(sset), "min_open_age": min_open_age,
     }
 
 
