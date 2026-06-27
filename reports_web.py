@@ -83,6 +83,7 @@ LOADING_OVERLAY = """
     var href=a.getAttribute('href')||'';
     if(a.target==='_blank'||a.hasAttribute('download'))return;
     if(href===''||href.charAt(0)==='#')return;
+    if(/\\.(csv|xlsx?|json|pdf|zip|tsv)(\\?|#|$)/i.test(href))return;  // file download, no navigation
     if(a.host&&a.host!==location.host)return;            // external link
     if(e.metaKey||e.ctrlKey||e.shiftKey||e.altKey||e.button!==0)return; // open-in-new-tab
     show();
@@ -383,7 +384,7 @@ INDIV = """
     <input type="number" name="min_age" min="0" value="{{ d.min_open_age }}" style="width:64px">
     <button class="pill" type="submit">Apply filters</button>
     <a class="pill" href="{{ request.path }}?days={{ d.window_days }}">Clear</a>
-    <a class="pill" style="float:right" href="{{ request.path }}/report.csv?{{ request.query_string.decode() }}">⬇ Download CSV</a>
+    <a class="pill" style="float:right" href="{{ request.path }}/report.csv?{{ request.query_string.decode() }}" download>⬇ Download CSV</a>
   </div>
 </form>
 <div class="cards">
@@ -546,7 +547,7 @@ TIS = """
     <a class="pill {{ 'ok' if mode=='window' else '' }}" href="?{{ query_for_mode('window') }}">In-window</a>
     <a class="pill {{ 'ok' if mode=='lifetime' else '' }}" href="?{{ query_for_mode('lifetime') }}">Lifetime</a>
   </span>
-  <a class="pill" style="float:right" href="/reports/time-in-status.csv?{{ query }}">Download CSV</a>
+  <a class="pill" style="float:right" href="/reports/time-in-status.csv?{{ query }}" download>Download CSV</a>
 </div>
 <div style="overflow-x:auto">
 <table>

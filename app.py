@@ -98,7 +98,7 @@ OVERVIEW_TMPL = BASE_CSS + """
 
   <div class="toolbar">
     <a class="btn" href="/exec">Executive dashboard &amp; reports →</a>
-    <a class="btn" href="/report.xlsx">Download Excel</a>
+    <a class="btn" href="/report.xlsx" download>Download Excel</a>
   </div>
 
   <table>
