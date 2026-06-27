@@ -24,10 +24,11 @@ Results are cached for a few minutes so page loads are fast and gentle on the AP
 
 from __future__ import annotations
 
+import csv
 import io
 import time
 
-from flask import Flask, Response, abort, jsonify, render_template_string
+from flask import Flask, Response, abort, jsonify, render_template_string, request
 
 import jira_client as jc
 import reports_web
@@ -129,6 +130,25 @@ DEV_TMPL = BASE_CSS + """
   <div class="sub"><a href="/" style="color:#cfe0ff">&larr; All developers</a></div>
 </header>
 <div class="wrap">
+  <form method="get" style="background:#fff;border-radius:8px;padding:14px 16px;box-shadow:0 1px 3px rgba(9,30,66,.12);margin-bottom:20px">
+    <div style="margin-bottom:6px"><b>Ticket type:</b>
+      {% for t in avail_types %}
+      <label style="margin:0 10px 0 2px"><input type="checkbox" name="type" value="{{ t }}" {% if t in sel_types %}checked{% endif %}> {{ t }}</label>
+      {% else %}<span class="muted">none</span>{% endfor %}
+    </div>
+    <div style="margin-bottom:6px"><b>Status:</b>
+      {% for s in avail_statuses %}
+      <label style="margin:0 10px 0 2px"><input type="checkbox" name="status" value="{{ s }}" {% if s in sel_statuses %}checked{% endif %}> {{ s }}</label>
+      {% else %}<span class="muted">none</span>{% endfor %}
+    </div>
+    <div>
+      <b>Min open age (days):</b>
+      <input type="number" name="min_age" min="0" value="{{ min_age }}" style="width:64px">
+      <button class="btn" type="submit">Apply filters</button>
+      <a class="pill" href="{{ request.path }}">Clear</a>
+      <a class="pill" style="float:right" href="{{ request.path }}/report.csv?{{ request.query_string.decode() }}" download>⬇ Download CSV</a>
+    </div>
+  </form>
   <div class="cards">
     <div class="card"><div class="n">{{ d.open_count }}</div><div class="l">Open assigned</div></div>
     <div class="card"><div class="n">{{ d.throughput }}</div><div class="l">Completed ({{ window }}d)</div></div>
@@ -204,13 +224,98 @@ def overview():
     )
 
 
+def _dev_filters(args):
+    """Parse the developer-page filter args, shared by the page and CSV routes."""
+    types = args.getlist("type")
+    statuses = args.getlist("status")
+    try:
+        min_age = max(int(args.get("min_age") or 0), 0)
+    except ValueError:
+        min_age = 0
+    return types, statuses, min_age
+
+
+def _dev_options(d):
+    """Distinct ticket types and statuses across all of a developer's tickets (for
+    the filter checkboxes — taken from the unfiltered set so toggles never vanish)."""
+    tickets = list(d.completed) + list(d.in_progress) + list(d.assigned)
+    return (sorted({t.issue_type for t in tickets if t.issue_type}),
+            sorted({t.status for t in tickets if t.status}))
+
+
+def _filtered_report(d, types, statuses, min_age):
+    """Return a new DeveloperReport with its lists narrowed by the filters.
+    Min-open-age only applies to the open 'assigned' list, which carries age_days."""
+    tset, sset = set(types), set(statuses)
+
+    def keep(t):
+        return (not tset or t.issue_type in tset) and (not sset or t.status in sset)
+
+    assigned = [t for t in d.assigned if keep(t)]
+    if min_age > 0:
+        assigned = [t for t in assigned if (t.age_days or 0) >= min_age]
+    return jc.DeveloperReport(
+        name=d.name,
+        completed=[t for t in d.completed if keep(t)],
+        in_progress=[t for t in d.in_progress if keep(t)],
+        assigned=assigned,
+    )
+
+
 @app.route("/developer/<name>")
 def developer(name):
     reports = get_reports()
     d = reports.get(name)
     if not d:
         abort(404)
-    return render_template_string(DEV_TMPL, d=d, fmt=fmt, window=jc.WINDOW_DAYS)
+    types, statuses, min_age = _dev_filters(request.args)
+    avail_types, avail_statuses = _dev_options(d)
+    fd = _filtered_report(d, types, statuses, min_age)
+    return render_template_string(
+        DEV_TMPL, d=fd, fmt=fmt, window=jc.WINDOW_DAYS,
+        avail_types=avail_types, avail_statuses=avail_statuses,
+        sel_types=set(types), sel_statuses=set(statuses), min_age=min_age)
+
+
+@app.route("/developer/<name>/report.csv")
+def developer_csv(name):
+    reports = get_reports()
+    d = reports.get(name)
+    if not d:
+        abort(404)
+    types, statuses, min_age = _dev_filters(request.args)
+    fd = _filtered_report(d, types, statuses, min_age)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow([f"Developer report — {fd.name}"])
+    w.writerow([f"Completed window: {jc.WINDOW_DAYS} days"])
+    w.writerow(["Filters — types:", ", ".join(sorted(set(types))) or "all",
+                "statuses:", ", ".join(sorted(set(statuses))) or "all",
+                "min open age (days):", min_age])
+    w.writerow([])
+    w.writerow(["Summary", "Value"])
+    w.writerow(["Open assigned", fd.open_count])
+    w.writerow(["Completed", fd.throughput])
+    w.writerow(["In progress", len(fd.in_progress)])
+    w.writerow(["Median cycle (days)", fd.median_cycle])
+    w.writerow([])
+    w.writerow(["In progress"])
+    w.writerow(["Key", "Summary", "Status", "Days in status", "URL"])
+    for t in fd.in_progress:
+        w.writerow([t.key, t.summary, t.status, t.days_in_status, t.url])
+    w.writerow([])
+    w.writerow(["Completed"])
+    w.writerow(["Key", "Summary", "Type", "Lead days", "Cycle days", "URL"])
+    for t in fd.completed:
+        w.writerow([t.key, t.summary, t.issue_type, t.lead_days, t.cycle_days, t.url])
+    w.writerow([])
+    w.writerow(["Currently assigned (open)"])
+    w.writerow(["Key", "Summary", "Type", "Status", "Open age (days)", "URL"])
+    for t in fd.assigned:
+        w.writerow([t.key, t.summary, t.issue_type, t.status, t.age_days, t.url])
+    safe = "".join(c if c.isalnum() else "_" for c in fd.name).strip("_") or "developer"
+    return Response(buf.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename=developer_{safe}.csv"})
 
 
 @app.route("/api/report.json")
