@@ -54,11 +54,11 @@ like *"In Progress / Start Investigation"* are handled automatically.
 | URL | What |
 |-----|------|
 | `/` | Team overview + per-developer summary table |
-| `/developer/<name>` | One developer's completed + in-progress detail |
+| `/developer/<name>` | One developer's in-progress / completed / assigned detail, with filters (ticket type, status, min open age) and CSV download at `/developer/<name>/report.csv` |
 | `/report.xlsx` | Download the workload report as an Excel workbook |
 | `/api/report.json` | Raw JSON |
 
-**Executive Reporting Framework (8 reports):**
+**Executive Reporting Framework:**
 
 | URL | Report |
 |-----|--------|
@@ -70,8 +70,9 @@ like *"In Progress / Start Investigation"* are handled automatically.
 | `/reports/time-in-status` | Per-ticket time in each status for a timeframe (24h / 7d / 30d / custom range). Two modes: **In-window** (only time accrued inside the window — default) and **Lifetime** (total per status). CSV export at `/reports/time-in-status.csv` |
 | `/reports/release?version=...` | Release Readiness — completion %, open bugs, risk score |
 | `/reports/sprints` | Sprint Health — needs `JIRA_BOARD_IDS` configured |
-| `/reports/individual/<name>` | Individual Activity — one person's full history. CSV download at `/reports/individual/<name>/report.csv` |
 | `/api/reports.json` | All report data as JSON |
+
+> Per-developer detail (Individual Activity) lives on the `/developer/<name>` page above.
 
 ### Configuration for the executive reports
 
