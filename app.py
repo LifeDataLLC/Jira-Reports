@@ -31,6 +31,7 @@ import time
 from flask import Flask, Response, abort, jsonify, render_template_string, request
 
 import jira_client as jc
+import reports as R
 import reports_web
 
 app = Flask(__name__)
@@ -149,6 +150,7 @@ DEV_TMPL = BASE_CSS + """
   <div class="sub"><a href="/" style="color:#cfe0ff">&larr; All developers</a></div>
 </header>
 <div class="wrap">
+  <a class="btn" href="/developer/{{ d.name|urlencode }}/history" style="display:inline-block;margin-bottom:18px">View full activity history &rarr;</a>
   <form method="get" class="filterbar">
     <div class="filterbar-head">
       <h3>Filters</h3>
@@ -233,6 +235,79 @@ DEV_TMPL = BASE_CSS + """
     </tr>
     {% else %}<tr><td colspan="5" class="muted">No open tickets assigned.</td></tr>{% endfor %}
   </table>
+</div>
+"""
+
+
+HIST_TMPL = BASE_CSS + """
+<style>
+ .hist-card{background:#fff;border:1px solid #e3e6ea;border-radius:10px;box-shadow:0 1px 3px rgba(9,30,66,.12);padding:14px 18px;margin-bottom:16px}
+ .hist-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+ .hist-key{font-weight:700;margin-right:8px}
+ .hist-tags{display:flex;gap:6px;flex-shrink:0}
+ .hist-meta{color:#5e6c84;font-size:13px;margin:6px 0 12px}
+ .hist-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.5fr);gap:18px}
+ .hist-label{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#5e6c84;margin-bottom:6px}
+ table.mini{width:100%;border-collapse:collapse;background:#fff;box-shadow:none}
+ table.mini th{font-size:11px;text-transform:uppercase;letter-spacing:.03em;color:#6b778c;text-align:left;padding:6px 8px;border-bottom:1px solid #ebecf0;font-weight:600}
+ table.mini td{padding:5px 8px;border-bottom:1px solid #f1f2f4;font-size:13px}
+ @media (max-width:760px){.hist-grid{grid-template-columns:1fr}}
+</style>
+<header>
+  <h1>Activity history — {{ d.person }}</h1>
+  <div class="sub"><a href="/developer/{{ d.person|urlencode }}" style="color:#cfe0ff">&larr; Back to summary</a> &middot; complete per-ticket history &middot; lookback {{ days }} days</div>
+</header>
+<div class="wrap">
+  <div class="cards">
+    <div class="card"><div class="n">{{ d.ticket_count }}</div><div class="l">Tickets worked on</div></div>
+    <div class="card"><div class="n">{{ fmt(d.active_days_total) }}</div><div class="l">Total active time</div></div>
+  </div>
+  <div class="toolbar">
+    <a class="btn" href="/developer/{{ d.person|urlencode }}/history.csv?days={{ days }}" download>&#8595; Download full history (CSV)</a>
+  </div>
+  {% for t in d.tickets %}
+  <div class="hist-card">
+    <div class="hist-head">
+      <div>
+        <a href="{{ t.issue.url }}" target="_blank" class="hist-key">{{ t.issue.key }}</a>
+        <span>{{ t.issue.summary }}</span>
+      </div>
+      <div class="hist-tags">
+        <span class="pill">{{ t.issue.type }}</span>
+        <span class="pill">{{ t.issue.status }}</span>
+      </div>
+    </div>
+    <div class="hist-meta">
+      Time worked (active): <b>{{ fmt(t.active_days) }}</b> &middot;
+      Total elapsed: <b>{{ fmt(t.total_days) }}</b> &middot;
+      {{ t.moves }} status change{{ '' if t.moves == 1 else 's' }}
+    </div>
+    <div class="hist-grid">
+      <div>
+        <div class="hist-label">Time in each status</div>
+        <table class="mini">
+          <tr><th>Status</th><th>Days</th></tr>
+          {% for s in t.per_status %}
+          <tr><td>{{ s.status }}</td><td>{{ s.days }}</td></tr>
+          {% else %}<tr><td colspan="2" class="muted">No recorded time.</td></tr>{% endfor %}
+        </table>
+      </div>
+      <div>
+        <div class="hist-label">Status transition history</div>
+        <table class="mini">
+          <tr><th>When</th><th>Change</th><th>By</th></tr>
+          {% for tr in t.transitions %}
+          <tr><td>{{ tr.ts.strftime('%Y-%m-%d %H:%M') }}</td>
+              <td>{{ tr['from'] }} &rarr; {{ tr.to }}</td>
+              <td>{{ tr.author }}</td></tr>
+          {% else %}<tr><td colspan="3" class="muted">No status changes recorded.</td></tr>{% endfor %}
+        </table>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <p class="muted">No tickets found for {{ d.person }} in the last {{ days }} days. Widen the range with <code>?days=730</code>.</p>
+  {% endfor %}
 </div>
 """
 
@@ -353,6 +428,50 @@ def developer_csv(name):
     safe = "".join(c if c.isalnum() else "_" for c in fd.name).strip("_") or "developer"
     return Response(buf.getvalue(), mimetype="text/csv",
                     headers={"Content-Disposition": f"attachment; filename=developer_{safe}.csv"})
+
+
+@app.route("/developer/<name>/history")
+def developer_history(name):
+    days = int(request.args.get("days", 365))
+    issues = R.load_issues(jc.fetch_working_set(days))
+    d = R.employee_history(issues, name)
+    return render_template_string(HIST_TMPL, d=d, fmt=fmt, days=days)
+
+
+@app.route("/developer/<name>/history.csv")
+def developer_history_csv(name):
+    days = int(request.args.get("days", 365))
+    issues = R.load_issues(jc.fetch_working_set(days))
+    d = R.employee_history(issues, name)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow([f"Activity history — {d['person']}"])
+    w.writerow([f"Tickets worked: {d['ticket_count']}",
+                f"Total active days: {d['active_days_total']}", f"Lookback days: {days}"])
+    w.writerow([])
+    w.writerow(["Tickets worked on"])
+    w.writerow(["Key", "Summary", "Type", "Current status", "Time worked (days)",
+                "Total elapsed (days)", "Status changes", "URL"])
+    for t in d["tickets"]:
+        i = t["issue"]
+        w.writerow([i.key, i.summary, i.type, i.status, t["active_days"],
+                    t["total_days"], t["moves"], i.url])
+    w.writerow([])
+    w.writerow(["Time in each status"])
+    w.writerow(["Key", "Status", "Days"])
+    for t in d["tickets"]:
+        for s in t["per_status"]:
+            w.writerow([t["issue"].key, s["status"], s["days"]])
+    w.writerow([])
+    w.writerow(["Status transition history"])
+    w.writerow(["Key", "Timestamp", "From", "To", "Author"])
+    for t in d["tickets"]:
+        for tr in t["transitions"]:
+            w.writerow([t["issue"].key, tr["ts"].strftime("%Y-%m-%d %H:%M"),
+                        tr["from"], tr["to"], tr["author"]])
+    safe = "".join(c if c.isalnum() else "_" for c in d["person"]).strip("_") or "employee"
+    return Response(buf.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename=history_{safe}.csv"})
 
 
 @app.route("/api/report.json")

@@ -208,6 +208,55 @@ def qa_productivity(issues, days_back=14, now=None):
 
 
 # ---------------------------------------------------------------------------
+# Employee Activity History — full per-ticket drill-down for one person
+# ---------------------------------------------------------------------------
+
+def employee_history(issues, person):
+    """Complete activity history for one employee.
+
+    Returns every ticket the person is currently assigned to OR performed a status
+    transition on, and for each ticket: total time, the time spent in each status,
+    and the full status-transition log (timestamp, from -> to, who moved it).
+
+    Attribution: a ticket counts as "worked on" if the person is the current assignee
+    or appears as the author of any status change in its history.
+    """
+    def authored(i):
+        return any(author == person for (_ts, author, _f, _t) in i.events)
+
+    worked = [i for i in issues if i.assignee == person or authored(i)]
+
+    tickets = []
+    total_active = 0.0
+    for i in worked:
+        per_status = sorted(
+            ({"status": s, "days": round(secs / 86400, 2)}
+             for s, secs in i.timeline.seconds_in_status.items() if secs > 0),
+            key=lambda r: -r["days"])
+        active = sum(i.timeline.seconds_in_stage.get(s, 0) for s in cfg.ACTIVE_STAGES)
+        total_active += active
+        transitions = [{"ts": ts, "author": author, "from": frm or "—", "to": to}
+                       for (ts, author, frm, to) in i.events]
+        last_activity = i.events[-1][0] if i.events else (i.resolved or i.created)
+        tickets.append({
+            "issue": i,
+            "active_days": round(active / 86400, 2) if active else None,
+            "total_days": round(sum(i.timeline.seconds_in_status.values()) / 86400, 2),
+            "per_status": per_status,
+            "transitions": transitions,
+            "moves": len(transitions),
+            "last_activity": last_activity,
+        })
+    tickets.sort(key=lambda t: t["last_activity"] or A.now_utc(), reverse=True)
+    return {
+        "person": person,
+        "ticket_count": len(tickets),
+        "active_days_total": round(total_active / 86400, 1),
+        "tickets": tickets,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Report 6 — Status Duration Analysis
 # ---------------------------------------------------------------------------
 

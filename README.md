@@ -55,6 +55,7 @@ like *"In Progress / Start Investigation"* are handled automatically.
 |-----|------|
 | `/` | Team overview + per-developer summary table |
 | `/developer/<name>` | One developer's in-progress / completed / assigned detail, with filters (ticket type, status, min open age) and CSV download at `/developer/<name>/report.csv` |
+| `/developer/<name>/history` | **Full activity history** — every ticket the person worked on, time spent per ticket, time in each status, and the complete status-transition log (with who moved it). CSV at `/developer/<name>/history.csv`. Lookback via `?days=N` (default 365) |
 | `/report.xlsx` | Download the workload report as an Excel workbook |
 | `/api/report.json` | Raw JSON |
 
