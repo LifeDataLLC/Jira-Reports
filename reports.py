@@ -245,6 +245,9 @@ def employee_history(issues, person):
             "per_status": per_status,
             "transitions": transitions,
             "moves": len(transitions),
+            "reopened": i.timeline.reopened_count,
+            "qa_rejections": i.timeline.qa_rejections,
+            "days_in_current_stage": i.timeline.days_in_stage(i.stage) if i.is_open else None,
             "last_activity": last_activity,
         })
     tickets.sort(key=lambda t: t["last_activity"] or A.now_utc(), reverse=True)

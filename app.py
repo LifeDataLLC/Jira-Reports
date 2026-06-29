@@ -55,6 +55,31 @@ def fmt(v, suffix="d"):
     return f"{v}{suffix}" if v is not None else "—"
 
 
+def hdur(days):
+    """Human-friendly duration from a float number of days: '3d 4h', '18h', '25m'."""
+    if days is None:
+        return "—"
+    total_h = days * 24
+    if total_h < 1:
+        return f"{max(round(total_h * 60), 1)}m"
+    if total_h < 24:
+        return f"{round(total_h)}h"
+    d = int(total_h // 24)
+    h = int(round(total_h - d * 24))
+    return f"{d}d {h}h" if h else f"{d}d"
+
+
+def agecls(days, warn=10, bad=20):
+    """CSS class for aging: '' (fresh), 'warn' (>=10d), 'bad' (>=20d)."""
+    if days is None:
+        return ""
+    if days >= bad:
+        return "bad"
+    if days >= warn:
+        return "warn"
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # Templates (kept inline to keep this a small, copy-pasteable project)
 # ---------------------------------------------------------------------------
@@ -77,6 +102,15 @@ BASE_CSS = """
   a { color: #0052cc; text-decoration: none; }
   a:hover { text-decoration: underline; }
   .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; background: #dfe1e6; }
+  .pill.warn { background:#fff7e6; color:#974f00; }
+  .pill.bad { background:#ffebe6; color:#bf2600; }
+  .pill.ok { background:#e3fcef; color:#006644; }
+  .badge-rework { display:inline-block;background:#ffebe6;color:#bf2600;border-radius:10px;padding:2px 8px;font-size:11px;font-weight:500;margin-left:6px; }
+  .search { width:100%;max-width:340px;padding:8px 12px;border:1px solid #dfe1e6;border-radius:8px;font-size:14px;margin-bottom:14px; }
+  .search:focus { outline:none;border-color:#4c9aff;box-shadow:0 0 0 2px rgba(76,154,255,.25); }
+  th[title], .help { border-bottom:1px dotted #b3bac5;cursor:help; }
+  details.txns summary { cursor:pointer;font-size:13px;color:#0052cc;padding:4px 0;user-select:none; }
+  details.txns[open] summary { margin-bottom:6px; }
   .warn { background: #ffebe6; color: #bf2600; }
   .muted { color: #6b778c; font-size: 13px; }
   h2 { font-size: 16px; margin: 28px 0 10px; }
@@ -188,54 +222,73 @@ DEV_TMPL = BASE_CSS + """
   <div class="cards">
     <div class="card"><div class="n">{{ d.open_count }}</div><div class="l">Open assigned</div></div>
     <div class="card"><div class="n">{{ d.throughput }}</div><div class="l">Completed ({{ window }}d)</div></div>
-    <div class="card"><div class="n">{{ fmt(d.median_cycle) }}</div><div class="l">Median cycle time</div></div>
+    <div class="card"><div class="n">{{ hdur(d.median_cycle) }}</div><div class="l help" title="Median first-In-Progress to Done across completed tickets">Median cycle time</div></div>
     <div class="card"><div class="n">{{ d.in_progress|length }}</div><div class="l">In progress</div></div>
-    <div class="card"><div class="n">{{ fmt(d.oldest_in_progress) }}</div><div class="l">Oldest WIP</div></div>
+    <div class="card"><div class="n">{{ hdur(d.oldest_in_progress) }}</div><div class="l help" title="Longest any in-progress ticket has sat in its current status">Oldest WIP</div></div>
   </div>
 
+  <input id="devSearch" class="search" type="search" placeholder="Search tickets by key or summary…" autocomplete="off">
+
   <h2>In progress</h2>
-  <table>
-    <tr><th>Key</th><th>Summary</th><th>Current status</th><th>Days in status</th><th>Time in progress</th></tr>
+  <table class="searchable">
+    <tr><th>Key</th><th>Summary</th><th>Current status</th><th title="Time the ticket has sat in its current status (aging)">Days in status</th><th title="Total time in active stages — actual work time, excluding paused/blocked">Time in progress</th></tr>
     {% for t in d.in_progress %}
     <tr>
-      <td><a href="{{ t.url }}" target="_blank">{{ t.key }}</a></td>
+      <td><a href="{{ t.url }}" target="_blank">{{ t.key }}</a>{% if t.reopened %}<span class="badge-rework" title="Reopened/sent back {{ t.reopened }} time(s)">&#8617; {{ t.reopened }}&times;</span>{% endif %}</td>
       <td>{{ t.summary }}</td>
       <td>{{ t.status }}</td>
-      <td>{% if t.days_in_status and t.days_in_status > 14 %}<span class="pill warn">{{ fmt(t.days_in_status) }}</span>{% else %}{{ fmt(t.days_in_status) }}{% endif %}</td>
-      <td>{{ fmt(t.active_days) }}</td>
+      <td>{% set c = agecls(t.days_in_status) %}<span class="{{ 'pill ' + c if c else '' }}" title="{{ t.days_in_status }} days">{{ hdur(t.days_in_status) }}</span></td>
+      <td title="{{ t.active_days }} days">{{ hdur(t.active_days) }}</td>
     </tr>
     {% else %}<tr><td colspan="5" class="muted">Nothing in progress.</td></tr>{% endfor %}
   </table>
-  <p class="muted"><b>Days in status</b> = time in the current status (aging). <b>Time in progress</b> = total time the ticket has spent in active/in-progress stages — how long it's actually been worked, excluding paused/blocked time.</p>
+  <p class="muted"><b>Days in status</b> = time in the current status (aging; <span class="pill warn">amber &ge;10d</span> <span class="pill bad">red &ge;20d</span>). <b>Time in progress</b> = total time in active/in-progress stages — actual work time, excluding paused/blocked.</p>
 
   <h2>Completed</h2>
-  <table>
-    <tr><th>Key</th><th>Summary</th><th>Type</th><th>Lead</th><th>Cycle</th></tr>
+  <table class="searchable">
+    <tr><th>Key</th><th>Summary</th><th>Type</th><th title="Created → resolved (calendar time)">Lead</th><th title="First In Progress → resolved (active cycle time)">Cycle</th></tr>
     {% for t in d.completed %}
     <tr>
-      <td><a href="{{ t.url }}" target="_blank">{{ t.key }}</a></td>
+      <td><a href="{{ t.url }}" target="_blank">{{ t.key }}</a>{% if t.reopened %}<span class="badge-rework" title="Reopened/sent back {{ t.reopened }} time(s)">&#8617; {{ t.reopened }}&times;</span>{% endif %}</td>
       <td>{{ t.summary }}</td>
       <td><span class="pill">{{ t.issue_type }}</span></td>
-      <td>{{ fmt(t.lead_days) }}</td>
-      <td>{{ fmt(t.cycle_days) }}</td>
+      <td title="{{ t.lead_days }} days">{{ hdur(t.lead_days) }}</td>
+      <td title="{{ t.cycle_days }} days">{{ hdur(t.cycle_days) }}</td>
     </tr>
     {% else %}<tr><td colspan="5" class="muted">None in window.</td></tr>{% endfor %}
   </table>
 
   <h2>Currently assigned <span class="muted">(all open tickets)</span></h2>
-  <table>
-    <tr><th>Key</th><th>Summary</th><th>Type</th><th>Status</th><th>Open age</th></tr>
+  <table class="searchable">
+    <tr><th>Key</th><th>Summary</th><th>Type</th><th>Status</th><th title="Calendar days since the ticket was created">Open age</th></tr>
     {% for t in d.assigned %}
     <tr>
       <td><a href="{{ t.url }}" target="_blank">{{ t.key }}</a></td>
       <td>{{ t.summary }}</td>
       <td><span class="pill">{{ t.issue_type }}</span></td>
       <td>{{ t.status }}</td>
-      <td>{{ fmt(t.age_days) }}</td>
+      <td>{% set c = agecls(t.age_days) %}<span class="{{ 'pill ' + c if c else '' }}" title="{{ t.age_days }} days">{{ hdur(t.age_days) }}</span></td>
     </tr>
     {% else %}<tr><td colspan="5" class="muted">No open tickets assigned.</td></tr>{% endfor %}
   </table>
 </div>
+<script>
+(function(){
+  var box=document.getElementById('devSearch');
+  if(!box)return;
+  box.addEventListener('input',function(){
+    var q=box.value.toLowerCase();
+    document.querySelectorAll('table.searchable').forEach(function(tb){
+      var rows=tb.querySelectorAll('tr');
+      for(var i=1;i<rows.length;i++){
+        var r=rows[i];
+        if(r.querySelector('td[colspan]'))continue;
+        r.style.display = r.textContent.toLowerCase().indexOf(q)>=0 ? '' : 'none';
+      }
+    });
+  });
+})();
+</script>
 """
 
 
@@ -255,15 +308,18 @@ HIST_TMPL = BASE_CSS + """
 </style>
 <header>
   <h1>Activity history — {{ d.person }}</h1>
-  <div class="sub"><a href="/developer/{{ d.person|urlencode }}" style="color:#cfe0ff">&larr; Back to summary</a> &middot; complete per-ticket history &middot; lookback {{ days }} days</div>
+  <div class="sub"><a href="/" style="color:#cfe0ff">&larr; Overview</a> &middot; <a href="/developer/{{ d.person|urlencode }}" style="color:#cfe0ff">Back to summary</a> &middot; complete per-ticket history &middot; lookback {{ days }} days</div>
 </header>
 <div class="wrap">
   <div class="cards">
     <div class="card"><div class="n">{{ d.ticket_count }}</div><div class="l">Tickets worked on</div></div>
-    <div class="card"><div class="n">{{ fmt(d.active_days_total) }}</div><div class="l">Total active time</div></div>
+    <div class="card"><div class="n">{{ hdur(d.active_days_total) }}</div><div class="l help" title="Total time across all of this person's tickets spent in active stages">Total active time</div></div>
   </div>
+  <input id="histSearch" class="search" type="search" placeholder="Search tickets by key or summary…" autocomplete="off">
   <div class="toolbar">
     <a class="btn" href="/developer/{{ d.person|urlencode }}/history.csv?days={{ days }}" download>&#8595; Download full history (CSV)</a>
+    <a class="btn-ghost" href="#" id="expandAll">Expand all</a>
+    <a class="btn-ghost" href="#" id="collapseAll">Collapse all</a>
   </div>
   {% for t in d.tickets %}
   <div class="hist-card">
@@ -275,33 +331,37 @@ HIST_TMPL = BASE_CSS + """
       <div class="hist-tags">
         <span class="pill">{{ t.issue.type }}</span>
         <span class="pill">{{ t.issue.status }}</span>
+        {% if t.reopened %}<span class="badge-rework" title="Sent back/reopened {{ t.reopened }} time(s)">&#8617; reopened {{ t.reopened }}&times;</span>{% endif %}
       </div>
     </div>
     <div class="hist-meta">
-      Time worked (active): <b>{{ fmt(t.active_days) }}</b> &middot;
-      Total elapsed: <b>{{ fmt(t.total_days) }}</b> &middot;
+      Time worked (active): <b title="{{ t.active_days }} days">{{ hdur(t.active_days) }}</b> &middot;
+      Total elapsed: <b title="{{ t.total_days }} days">{{ hdur(t.total_days) }}</b> &middot;
       {{ t.moves }} status change{{ '' if t.moves == 1 else 's' }}
+      {% set c = agecls(t.days_in_current_stage) %}{% if c %}&middot; <span class="pill {{ c }}">stuck {{ hdur(t.days_in_current_stage) }} in {{ t.issue.status }}</span>{% endif %}
     </div>
     <div class="hist-grid">
       <div>
         <div class="hist-label">Time in each status</div>
         <table class="mini">
-          <tr><th>Status</th><th>Days</th></tr>
+          <tr><th>Status</th><th>Time</th></tr>
           {% for s in t.per_status %}
-          <tr><td>{{ s.status }}</td><td>{{ s.days }}</td></tr>
+          <tr><td>{{ s.status }}</td><td title="{{ s.days }} days">{{ hdur(s.days) }}</td></tr>
           {% else %}<tr><td colspan="2" class="muted">No recorded time.</td></tr>{% endfor %}
         </table>
       </div>
       <div>
-        <div class="hist-label">Status transition history</div>
-        <table class="mini">
-          <tr><th>When</th><th>Change</th><th>By</th></tr>
-          {% for tr in t.transitions %}
-          <tr><td>{{ tr.ts.strftime('%Y-%m-%d %H:%M') }}</td>
-              <td>{{ tr['from'] }} &rarr; {{ tr.to }}</td>
-              <td>{{ tr.author }}</td></tr>
-          {% else %}<tr><td colspan="3" class="muted">No status changes recorded.</td></tr>{% endfor %}
-        </table>
+        <details class="txns">
+          <summary>Status transition history ({{ t.moves }})</summary>
+          <table class="mini">
+            <tr><th>When</th><th>Change</th><th>By</th></tr>
+            {% for tr in t.transitions %}
+            <tr><td>{{ tr.ts.strftime('%Y-%m-%d %H:%M') }}</td>
+                <td>{{ tr['from'] }} &rarr; {{ tr.to }}</td>
+                <td>{{ tr.author }}</td></tr>
+            {% else %}<tr><td colspan="3" class="muted">No status changes recorded.</td></tr>{% endfor %}
+          </table>
+        </details>
       </div>
     </div>
   </div>
@@ -309,6 +369,21 @@ HIST_TMPL = BASE_CSS + """
   <p class="muted">No tickets found for {{ d.person }} in the last {{ days }} days. Widen the range with <code>?days=730</code>.</p>
   {% endfor %}
 </div>
+<script>
+(function(){
+  var box=document.getElementById('histSearch');
+  if(box){box.addEventListener('input',function(){
+    var q=box.value.toLowerCase();
+    document.querySelectorAll('.hist-card').forEach(function(c){
+      c.style.display = c.textContent.toLowerCase().indexOf(q)>=0 ? '' : 'none';
+    });
+  });}
+  function setAll(open){document.querySelectorAll('details.txns').forEach(function(d){d.open=open;});}
+  var ea=document.getElementById('expandAll'), ca=document.getElementById('collapseAll');
+  if(ea)ea.addEventListener('click',function(e){e.preventDefault();setAll(true);});
+  if(ca)ca.addEventListener('click',function(e){e.preventDefault();setAll(false);});
+})();
+</script>
 """
 
 
@@ -383,7 +458,7 @@ def developer(name):
     avail_types, avail_statuses = _dev_options(d)
     fd = _filtered_report(d, types, statuses, min_age)
     return render_template_string(
-        DEV_TMPL, d=fd, fmt=fmt, window=jc.WINDOW_DAYS,
+        DEV_TMPL, d=fd, fmt=fmt, hdur=hdur, agecls=agecls, window=jc.WINDOW_DAYS,
         avail_types=avail_types, avail_statuses=avail_statuses,
         sel_types=set(types), sel_statuses=set(statuses), min_age=min_age)
 
@@ -435,7 +510,7 @@ def developer_history(name):
     days = int(request.args.get("days", 365))
     issues = R.load_issues(jc.fetch_working_set(days))
     d = R.employee_history(issues, name)
-    return render_template_string(HIST_TMPL, d=d, fmt=fmt, days=days)
+    return render_template_string(HIST_TMPL, d=d, fmt=fmt, hdur=hdur, agecls=agecls, days=days)
 
 
 @app.route("/developer/<name>/history.csv")

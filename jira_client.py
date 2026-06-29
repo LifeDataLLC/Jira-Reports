@@ -311,6 +311,7 @@ class Ticket:
     days_in_status: float | None = None   # now - last status change (aging)
     age_days: float | None = None         # now - created (how long the ticket has been open)
     active_days: float | None = None      # total time in active/in-progress stages = time worked
+    reopened: int = 0                     # times sent back / reopened after QA or Done (rework)
 
     @property
     def url(self) -> str:
@@ -406,17 +407,22 @@ def build_report(fetch_changelogs: bool = True) -> dict[str, DeveloperReport]:
     def report_for(name: str) -> DeveloperReport:
         return reports.setdefault(name, DeveloperReport(name=name))
 
+    import analytics as A
+    import config as cfg
     for raw in completed_raw:
         t = _to_ticket(raw)
         t.lead_days = days_between(t.created, t.resolved)
         if fetch_changelogs:
-            tr = status_transitions(raw.get("changelog", {}).get("histories", []))
+            hist = raw.get("changelog", {}).get("histories", [])
+            tr = status_transitions(hist)
             start = first_active_entry(tr, IN_PROGRESS_STATUSES)
             t.cycle_days = days_between(start, t.resolved)
+            f = raw.get("fields", {})
+            tl = A.analyze(hist, f.get("created"), f.get("resolutiondate"),
+                           t.status, t.status_category)
+            t.reopened = tl.reopened_count
         report_for(t.assignee).completed.append(t)
 
-    import analytics as A
-    import config as cfg
     for raw in inprogress_raw:
         t = _to_ticket(raw)
         if fetch_changelogs:
@@ -430,6 +436,7 @@ def build_report(fetch_changelogs: bool = True) -> dict[str, DeveloperReport]:
                            t.status, t.status_category)
             active = sum(tl.seconds_in_stage.get(s, 0) for s in cfg.ACTIVE_STAGES)
             t.active_days = round(active / 86400, 1) if active else None
+            t.reopened = tl.reopened_count
         report_for(t.assignee).in_progress.append(t)
 
     for raw in assigned_raw:
