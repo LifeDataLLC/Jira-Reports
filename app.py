@@ -649,7 +649,7 @@ def developer_csv(name):
 def developer_history(name):
     days = int(request.args.get("days", 365))
     issues = R.load_issues(jc.fetch_working_set(days))
-    d = R.employee_history(issues, name)
+    d = R.employee_history(issues, name, since_days=days)
     present = [st for st in cfg.STAGE_ORDER
                if any(s["stage"] == st for t in d["tickets"] for s in t["stages"])]
     # Team-wide median time per stage, for the per-ticket outlier benchmarks.
@@ -663,7 +663,7 @@ def developer_history(name):
 def developer_history_csv(name):
     days = int(request.args.get("days", 365))
     issues = R.load_issues(jc.fetch_working_set(days))
-    d = R.employee_history(issues, name)
+    d = R.employee_history(issues, name, since_days=days)
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow([f"Activity history — {d['person']}"])

@@ -211,7 +211,7 @@ def qa_productivity(issues, days_back=14, now=None):
 # Employee Activity History — full per-ticket drill-down for one person
 # ---------------------------------------------------------------------------
 
-def employee_history(issues, person):
+def employee_history(issues, person, since_days=None):
     """Complete activity history for one employee.
 
     Returns every ticket the person is currently assigned to OR performed a status
@@ -220,11 +220,21 @@ def employee_history(issues, person):
 
     Attribution: a ticket counts as "worked on" if the person is the current assignee
     or appears as the author of any status change in its history.
+
+    since_days: if set, only include tickets whose most recent status change (or, if
+    a ticket never moved, its creation) is within this many days — so a lookback of
+    30d shows tickets actually touched in the last 30 days, not every open ticket.
     """
     def authored(i):
         return any(author == person for (_ts, author, _f, _t) in i.events)
 
+    def last_change(i):
+        return i.events[-1][0] if i.events else (i.resolved or i.created)
+
     worked = [i for i in issues if i.assignee == person or authored(i)]
+    if since_days:
+        cutoff = A.now_utc() - dt.timedelta(days=since_days)
+        worked = [i for i in worked if last_change(i) and last_change(i) >= cutoff]
 
     tickets = []
     total_active = 0.0
