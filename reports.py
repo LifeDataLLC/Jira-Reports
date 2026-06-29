@@ -233,6 +233,12 @@ def employee_history(issues, person):
             ({"status": s, "days": round(secs / 86400, 2)}
              for s, secs in i.timeline.seconds_in_status.items() if secs > 0),
             key=lambda r: -r["days"])
+        # Per-stage breakdown in workflow order, for the stage-journey bar.
+        stage_secs = i.timeline.seconds_in_stage
+        stage_total = sum(stage_secs.values()) or 1
+        stages = [{"stage": st, "days": round(stage_secs[st] / 86400, 2),
+                   "pct": round(100 * stage_secs[st] / stage_total, 1)}
+                  for st in cfg.STAGE_ORDER if stage_secs.get(st, 0) > 0]
         active = sum(i.timeline.seconds_in_stage.get(s, 0) for s in cfg.ACTIVE_STAGES)
         total_active += active
         transitions = [{"ts": ts, "author": author, "from": frm or "—", "to": to}
@@ -243,6 +249,7 @@ def employee_history(issues, person):
             "active_days": round(active / 86400, 2) if active else None,
             "total_days": round(sum(i.timeline.seconds_in_status.values()) / 86400, 2),
             "per_status": per_status,
+            "stages": stages,
             "transitions": transitions,
             "moves": len(transitions),
             "reopened": i.timeline.reopened_count,

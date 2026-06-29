@@ -30,6 +30,7 @@ import time
 
 from flask import Flask, Response, abort, jsonify, render_template_string, request
 
+import config as cfg
 import jira_client as jc
 import reports as R
 import reports_web
@@ -111,6 +112,17 @@ BASE_CSS = """
   th[title], .help { border-bottom:1px dotted #b3bac5;cursor:help; }
   details.txns summary { cursor:pointer;font-size:13px;color:#0052cc;padding:4px 0;user-select:none; }
   details.txns[open] summary { margin-bottom:6px; }
+  .attention { display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px; }
+  .attention .a { background:#fff;border:1px solid #e3e6ea;border-radius:8px;padding:8px 14px;font-size:13px;color:#5e6c84; }
+  .attention .a b { font-size:16px;color:#172b4d;margin-right:5px; }
+  .attention .a.hot { background:#ffebe6;border-color:#ffbdad; } .attention .a.hot b { color:#bf2600; }
+  .attention .a.warm { background:#fff7e6;border-color:#ffe2b3; } .attention .a.warm b { color:#974f00; }
+  .journey { display:flex;height:24px;border-radius:6px;overflow:hidden;font-size:11px;color:#fff;font-weight:500;margin:4px 0 6px; }
+  .journey .seg { display:flex;align-items:center;justify-content:center;white-space:nowrap;overflow:hidden;min-width:0;text-shadow:0 1px 1px rgba(0,0,0,.35); }
+  .legend { display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:#5e6c84;margin-bottom:8px; }
+  .legend .sw { display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px; }
+  table.sortable th { cursor:pointer;user-select:none; }
+  table.sortable th .ind { color:#0052cc;font-size:10px; }
   .warn { background: #ffebe6; color: #bf2600; }
   .muted { color: #6b778c; font-size: 13px; }
   h2 { font-size: 16px; margin: 28px 0 10px; }
@@ -185,6 +197,12 @@ DEV_TMPL = BASE_CSS + """
 </header>
 <div class="wrap">
   <a class="btn" href="/developer/{{ d.name|urlencode }}/history" style="display:inline-block;margin-bottom:18px">View full activity history &rarr;</a>
+  <div class="attention">
+    <span class="a {{ 'hot' if alerts.stuck else '' }}"><b>{{ alerts.stuck }}</b>stuck &ge;10d</span>
+    <span class="a {{ 'hot' if alerts.reopened else '' }}"><b>{{ alerts.reopened }}</b>reopened</span>
+    <span class="a {{ 'warm' if alerts.blocked else '' }}"><b>{{ alerts.blocked }}</b>blocked</span>
+    <span class="a"><b>{{ hdur(alerts.oldest) if alerts.oldest else '0d' }}</b>oldest open ticket</span>
+  </div>
   <form method="get" class="filterbar">
     <div class="filterbar-head">
       <h3>Filters</h3>
@@ -230,36 +248,36 @@ DEV_TMPL = BASE_CSS + """
   <input id="devSearch" class="search" type="search" placeholder="Search tickets by key or summary…" autocomplete="off">
 
   <h2>In progress</h2>
-  <table class="searchable">
+  <table class="searchable sortable">
     <tr><th>Key</th><th>Summary</th><th>Current status</th><th title="Time the ticket has sat in its current status (aging)">Days in status</th><th title="Total time in active stages — actual work time, excluding paused/blocked">Time in progress</th></tr>
     {% for t in d.in_progress %}
     <tr>
       <td><a href="{{ t.url }}" target="_blank">{{ t.key }}</a>{% if t.reopened %}<span class="badge-rework" title="Reopened/sent back {{ t.reopened }} time(s)">&#8617; {{ t.reopened }}&times;</span>{% endif %}</td>
       <td>{{ t.summary }}</td>
       <td>{{ t.status }}</td>
-      <td>{% set c = agecls(t.days_in_status) %}<span class="{{ 'pill ' + c if c else '' }}" title="{{ t.days_in_status }} days">{{ hdur(t.days_in_status) }}</span></td>
-      <td title="{{ t.active_days }} days">{{ hdur(t.active_days) }}</td>
+      <td data-sort="{{ t.days_in_status or 0 }}">{% set c = agecls(t.days_in_status) %}<span class="{{ 'pill ' + c if c else '' }}" title="{{ t.days_in_status }} days">{{ hdur(t.days_in_status) }}</span></td>
+      <td data-sort="{{ t.active_days or 0 }}" title="{{ t.active_days }} days">{{ hdur(t.active_days) }}</td>
     </tr>
     {% else %}<tr><td colspan="5" class="muted">Nothing in progress.</td></tr>{% endfor %}
   </table>
   <p class="muted"><b>Days in status</b> = time in the current status (aging; <span class="pill warn">amber &ge;10d</span> <span class="pill bad">red &ge;20d</span>). <b>Time in progress</b> = total time in active/in-progress stages — actual work time, excluding paused/blocked.</p>
 
   <h2>Completed</h2>
-  <table class="searchable">
+  <table class="searchable sortable">
     <tr><th>Key</th><th>Summary</th><th>Type</th><th title="Created → resolved (calendar time)">Lead</th><th title="First In Progress → resolved (active cycle time)">Cycle</th></tr>
     {% for t in d.completed %}
     <tr>
       <td><a href="{{ t.url }}" target="_blank">{{ t.key }}</a>{% if t.reopened %}<span class="badge-rework" title="Reopened/sent back {{ t.reopened }} time(s)">&#8617; {{ t.reopened }}&times;</span>{% endif %}</td>
       <td>{{ t.summary }}</td>
       <td><span class="pill">{{ t.issue_type }}</span></td>
-      <td title="{{ t.lead_days }} days">{{ hdur(t.lead_days) }}</td>
-      <td title="{{ t.cycle_days }} days">{{ hdur(t.cycle_days) }}</td>
+      <td data-sort="{{ t.lead_days or 0 }}" title="{{ t.lead_days }} days">{{ hdur(t.lead_days) }}</td>
+      <td data-sort="{{ t.cycle_days or 0 }}" title="{{ t.cycle_days }} days">{{ hdur(t.cycle_days) }}</td>
     </tr>
     {% else %}<tr><td colspan="5" class="muted">None in window.</td></tr>{% endfor %}
   </table>
 
   <h2>Currently assigned <span class="muted">(all open tickets)</span></h2>
-  <table class="searchable">
+  <table class="searchable sortable">
     <tr><th>Key</th><th>Summary</th><th>Type</th><th>Status</th><th title="Calendar days since the ticket was created">Open age</th></tr>
     {% for t in d.assigned %}
     <tr>
@@ -267,7 +285,7 @@ DEV_TMPL = BASE_CSS + """
       <td>{{ t.summary }}</td>
       <td><span class="pill">{{ t.issue_type }}</span></td>
       <td>{{ t.status }}</td>
-      <td>{% set c = agecls(t.age_days) %}<span class="{{ 'pill ' + c if c else '' }}" title="{{ t.age_days }} days">{{ hdur(t.age_days) }}</span></td>
+      <td data-sort="{{ t.age_days or 0 }}">{% set c = agecls(t.age_days) %}<span class="{{ 'pill ' + c if c else '' }}" title="{{ t.age_days }} days">{{ hdur(t.age_days) }}</span></td>
     </tr>
     {% else %}<tr><td colspan="5" class="muted">No open tickets assigned.</td></tr>{% endfor %}
   </table>
@@ -275,8 +293,7 @@ DEV_TMPL = BASE_CSS + """
 <script>
 (function(){
   var box=document.getElementById('devSearch');
-  if(!box)return;
-  box.addEventListener('input',function(){
+  if(box){box.addEventListener('input',function(){
     var q=box.value.toLowerCase();
     document.querySelectorAll('table.searchable').forEach(function(tb){
       var rows=tb.querySelectorAll('tr');
@@ -285,6 +302,34 @@ DEV_TMPL = BASE_CSS + """
         if(r.querySelector('td[colspan]'))continue;
         r.style.display = r.textContent.toLowerCase().indexOf(q)>=0 ? '' : 'none';
       }
+    });
+  });}
+  function cellVal(row,col){
+    var c=row.children[col]; if(!c)return '';
+    var ds=c.getAttribute('data-sort');
+    if(ds!==null)return parseFloat(ds)||0;
+    return c.textContent.trim().toLowerCase();
+  }
+  document.querySelectorAll('table.sortable').forEach(function(table){
+    var header=table.querySelector('tr'); if(!header)return;
+    Array.prototype.forEach.call(header.children,function(th,col){
+      th.addEventListener('click',function(){
+        var asc=th.getAttribute('data-dir')!=='asc';
+        Array.prototype.forEach.call(header.children,function(h){
+          h.removeAttribute('data-dir'); var i=h.querySelector('.ind'); if(i)i.remove();
+        });
+        th.setAttribute('data-dir',asc?'asc':'desc');
+        var ind=document.createElement('span'); ind.className='ind';
+        ind.textContent=asc?' ▲':' ▼'; th.appendChild(ind);
+        var rows=Array.prototype.slice.call(table.querySelectorAll('tr')).filter(function(r){
+          return r!==header && !r.querySelector('td[colspan]');
+        });
+        rows.sort(function(a,b){
+          var av=cellVal(a,col), bv=cellVal(b,col);
+          return av<bv?(asc?-1:1):(av>bv?(asc?1:-1):0);
+        });
+        rows.forEach(function(r){table.appendChild(r);});
+      });
     });
   });
 })();
@@ -321,6 +366,11 @@ HIST_TMPL = BASE_CSS + """
     <a class="btn-ghost" href="#" id="expandAll">Expand all</a>
     <a class="btn-ghost" href="#" id="collapseAll">Collapse all</a>
   </div>
+  {% if legend_stages %}
+  <div class="legend">
+    {% for st in legend_stages %}<span><span class="sw" style="background:{{ stage_colors.get(st,'#888') }}"></span>{{ st }}</span>{% endfor %}
+  </div>
+  {% endif %}
   {% for t in d.tickets %}
   <div class="hist-card">
     <div class="hist-head">
@@ -340,6 +390,13 @@ HIST_TMPL = BASE_CSS + """
       {{ t.moves }} status change{{ '' if t.moves == 1 else 's' }}
       {% set c = agecls(t.days_in_current_stage) %}{% if c %}&middot; <span class="pill {{ c }}">stuck {{ hdur(t.days_in_current_stage) }} in {{ t.issue.status }}</span>{% endif %}
     </div>
+    {% if t.stages %}
+    <div class="journey">
+      {% for s in t.stages %}
+      <div class="seg" style="width:{{ s.pct }}%;background:{{ stage_colors.get(s.stage,'#888') }}" title="{{ s.stage }}: {{ hdur(s.days) }} ({{ s.pct }}%)">{% if s.pct >= 9 %}{{ hdur(s.days) }}{% endif %}</div>
+      {% endfor %}
+    </div>
+    {% endif %}
     <div class="hist-grid">
       <div>
         <div class="hist-label">Time in each status</div>
@@ -448,6 +505,16 @@ def _filtered_report(d, types, statuses, min_age):
     )
 
 
+def _attention(fd):
+    """Summary alert counts for the 'needs attention' banner."""
+    stuck = sum(1 for t in fd.in_progress if (t.days_in_status or 0) >= 10)
+    reopened = sum(1 for t in (fd.in_progress + fd.completed) if getattr(t, "reopened", 0))
+    blocked = sum(1 for t in fd.assigned
+                  if cfg.stage_of(t.status, t.status_category) in cfg.BLOCKED_STAGES)
+    oldest = max((t.age_days or 0 for t in fd.assigned), default=0)
+    return {"stuck": stuck, "reopened": reopened, "blocked": blocked, "oldest": oldest}
+
+
 @app.route("/developer/<name>")
 def developer(name):
     reports = get_reports()
@@ -459,6 +526,7 @@ def developer(name):
     fd = _filtered_report(d, types, statuses, min_age)
     return render_template_string(
         DEV_TMPL, d=fd, fmt=fmt, hdur=hdur, agecls=agecls, window=jc.WINDOW_DAYS,
+        alerts=_attention(fd),
         avail_types=avail_types, avail_statuses=avail_statuses,
         sel_types=set(types), sel_statuses=set(statuses), min_age=min_age)
 
@@ -510,7 +578,10 @@ def developer_history(name):
     days = int(request.args.get("days", 365))
     issues = R.load_issues(jc.fetch_working_set(days))
     d = R.employee_history(issues, name)
-    return render_template_string(HIST_TMPL, d=d, fmt=fmt, hdur=hdur, agecls=agecls, days=days)
+    present = [st for st in cfg.STAGE_ORDER
+               if any(s["stage"] == st for t in d["tickets"] for s in t["stages"])]
+    return render_template_string(HIST_TMPL, d=d, fmt=fmt, hdur=hdur, agecls=agecls,
+                                  days=days, stage_colors=cfg.STAGE_COLORS, legend_stages=present)
 
 
 @app.route("/developer/<name>/history.csv")

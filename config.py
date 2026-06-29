@@ -35,6 +35,19 @@ STAGE_ORDER = [
     STAGE_READY_FOR_QA, STAGE_QA_TESTING, STAGE_STAGING, STAGE_DONE, STAGE_REOPENED,
 ]
 
+# Stable color per stage, used by the stage-journey bar and legends.
+STAGE_COLORS = {
+    STAGE_TODO: "#8993a4",          # gray
+    STAGE_IN_PROGRESS: "#0065ff",   # blue
+    STAGE_DEVELOPMENT: "#0747a6",   # dark blue
+    STAGE_PAUSED: "#ff7452",        # red-orange (blocked)
+    STAGE_READY_FOR_QA: "#00b8d9",  # teal
+    STAGE_QA_TESTING: "#ffab00",    # amber
+    STAGE_STAGING: "#6554c0",       # purple
+    STAGE_DONE: "#36b37e",          # green
+    STAGE_REOPENED: "#de350b",      # red
+}
+
 # ---------------------------------------------------------------------------
 # Real LifeData status name -> logical stage.
 # Derived from the LIFEDATAV2 workflow seen in the changelog. Add new statuses here.
