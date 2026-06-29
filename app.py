@@ -123,6 +123,13 @@ BASE_CSS = """
   .legend .sw { display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px; }
   table.sortable th { cursor:pointer;user-select:none; }
   table.sortable th .ind { color:#0052cc;font-size:10px; }
+  .controls { display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px; }
+  .controls .ctl-label { font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#5e6c84;margin-right:2px; }
+  .chipbtn { background:#fff;border:1px solid #dfe1e6;border-radius:16px;padding:5px 12px;font-size:13px;color:#42526e;cursor:pointer; }
+  .chipbtn:hover { border-color:#9fb3d1; }
+  .chipbtn.active { background:#e6effd;border-color:#4c9aff;color:#0747a6;font-weight:500; }
+  .group-header { font-size:13px;font-weight:500;color:#172b4d;margin:16px 0 8px;padding-bottom:4px;border-bottom:2px solid #dfe1e6; }
+  .bench { margin:5px 0 0; }
   .warn { background: #ffebe6; color: #bf2600; }
   .muted { color: #6b778c; font-size: 13px; }
   h2 { font-size: 16px; margin: 28px 0 10px; }
@@ -360,7 +367,24 @@ HIST_TMPL = BASE_CSS + """
     <div class="card"><div class="n">{{ d.ticket_count }}</div><div class="l">Tickets worked on</div></div>
     <div class="card"><div class="n">{{ hdur(d.active_days_total) }}</div><div class="l help" title="Total time across all of this person's tickets spent in active stages">Total active time</div></div>
   </div>
+  {% if d.insight.top_stage %}
+  <p class="muted" style="font-size:14px;margin:-2px 0 14px"><b>At a glance:</b> spends the most time in <b>{{ d.insight.top_stage }}</b> ({{ hdur(d.insight.top_stage_days) }} across all tickets){% if d.insight.reopened_tickets %} &middot; {{ d.insight.reopened_tickets }} ticket(s) reopened{% endif %}{% if d.insight.stuck_tickets %} &middot; {{ d.insight.stuck_tickets }} currently stuck &ge;10d{% endif %}.</p>
+  {% endif %}
   <input id="histSearch" class="search" type="search" placeholder="Search tickets by key or summary…" autocomplete="off">
+  <div class="controls">
+    <span class="ctl-label">Lookback</span>
+    {% for opt in [30,90,180,365,730] %}<a class="pill {{ 'ok' if days==opt else '' }}" href="?days={{ opt }}">{{ opt }}d</a>{% endfor %}
+  </div>
+  <div class="controls">
+    <span class="ctl-label">Show</span>
+    <button type="button" class="chipbtn active" data-filter="all">All</button>
+    <button type="button" class="chipbtn" data-filter="stuck">Stuck</button>
+    <button type="button" class="chipbtn" data-filter="reopened">Reopened</button>
+    <button type="button" class="chipbtn" data-filter="bugs">Bugs</button>
+    <button type="button" class="chipbtn" data-filter="open">Open</button>
+    <button type="button" class="chipbtn" data-filter="completed">Completed</button>
+    <label style="margin-left:12px;font-size:13px"><input type="checkbox" id="groupStatus"> Group by status</label>
+  </div>
   <div class="toolbar">
     <a class="btn" href="/developer/{{ d.person|urlencode }}/history.csv?days={{ days }}" download>&#8595; Download full history (CSV)</a>
     <a class="btn-ghost" href="#" id="expandAll">Expand all</a>
@@ -371,8 +395,9 @@ HIST_TMPL = BASE_CSS + """
     {% for st in legend_stages %}<span><span class="sw" style="background:{{ stage_colors.get(st,'#888') }}"></span>{{ st }}</span>{% endfor %}
   </div>
   {% endif %}
+  <div id="histCards">
   {% for t in d.tickets %}
-  <div class="hist-card">
+  <div class="hist-card" data-order="{{ loop.index0 }}" data-type="{{ t.issue.type|lower }}" data-reopened="{{ 1 if t.reopened else 0 }}" data-stuck="{{ 1 if (t.days_in_current_stage and t.days_in_current_stage >= 10) else 0 }}" data-open="{{ 1 if t.issue.is_open else 0 }}" data-status="{{ t.issue.status }}">
     <div class="hist-head">
       <div>
         <a href="{{ t.issue.url }}" target="_blank" class="hist-key">{{ t.issue.key }}</a>
@@ -397,6 +422,7 @@ HIST_TMPL = BASE_CSS + """
       {% endfor %}
     </div>
     {% endif %}
+    {% for s in t.stages %}{% set m = team_median.get(s.stage) %}{% if m and s.days >= m * 1.5 %}<div class="bench"><span class="pill warn" title="This ticket's time in {{ s.stage }} compared to the team median">&#9888; {{ s.stage }}: {{ hdur(s.days) }} = {{ (s.days / m)|round(1) }}&times; team median ({{ hdur(m) }})</span></div>{% endif %}{% endfor %}
     <div class="hist-grid">
       <div>
         <div class="hist-label">Time in each status</div>
@@ -423,18 +449,64 @@ HIST_TMPL = BASE_CSS + """
     </div>
   </div>
   {% else %}
-  <p class="muted">No tickets found for {{ d.person }} in the last {{ days }} days. Widen the range with <code>?days=730</code>.</p>
+  <p class="muted">No tickets found for {{ d.person }} in the last {{ days }} days. Widen the range above.</p>
   {% endfor %}
+  </div>
 </div>
 <script>
 (function(){
-  var box=document.getElementById('histSearch');
-  if(box){box.addEventListener('input',function(){
-    var q=box.value.toLowerCase();
-    document.querySelectorAll('.hist-card').forEach(function(c){
-      c.style.display = c.textContent.toLowerCase().indexOf(q)>=0 ? '' : 'none';
+  var container=document.getElementById('histCards');
+  if(!container)return;
+  var cards=Array.prototype.slice.call(container.querySelectorAll('.hist-card'));
+  var searchBox=document.getElementById('histSearch');
+  var groupCb=document.getElementById('groupStatus');
+  var activeFilter='all';
+  function matchFilter(c){
+    switch(activeFilter){
+      case 'stuck': return c.getAttribute('data-stuck')==='1';
+      case 'reopened': return c.getAttribute('data-reopened')==='1';
+      case 'bugs': return c.getAttribute('data-type')==='bug';
+      case 'open': return c.getAttribute('data-open')==='1';
+      case 'completed': return c.getAttribute('data-open')==='0';
+      default: return true;
+    }
+  }
+  function apply(){
+    var q=(searchBox&&searchBox.value||'').toLowerCase();
+    container.querySelectorAll('.group-header').forEach(function(h){h.remove();});
+    var visible=cards.filter(function(c){
+      return matchFilter(c) && c.textContent.toLowerCase().indexOf(q)>=0;
     });
-  });}
+    cards.forEach(function(c){ if(visible.indexOf(c)<0) c.style.display='none'; });
+    var grouped=groupCb&&groupCb.checked;
+    visible.sort(function(a,b){
+      if(grouped){
+        var sa=a.getAttribute('data-status'), sb=b.getAttribute('data-status');
+        if(sa<sb)return -1; if(sa>sb)return 1;
+      }
+      return parseInt(a.getAttribute('data-order'))-parseInt(b.getAttribute('data-order'));
+    });
+    var last=null;
+    visible.forEach(function(c){
+      c.style.display='';
+      if(grouped){
+        var st=c.getAttribute('data-status');
+        if(st!==last){
+          var h=document.createElement('div'); h.className='group-header'; h.textContent=st;
+          container.appendChild(h); last=st;
+        }
+      }
+      container.appendChild(c);
+    });
+  }
+  if(searchBox)searchBox.addEventListener('input',apply);
+  if(groupCb)groupCb.addEventListener('change',apply);
+  document.querySelectorAll('.chipbtn').forEach(function(btn){
+    btn.addEventListener('click',function(){
+      document.querySelectorAll('.chipbtn').forEach(function(b){b.classList.remove('active');});
+      btn.classList.add('active'); activeFilter=btn.getAttribute('data-filter'); apply();
+    });
+  });
   function setAll(open){document.querySelectorAll('details.txns').forEach(function(d){d.open=open;});}
   var ea=document.getElementById('expandAll'), ca=document.getElementById('collapseAll');
   if(ea)ea.addEventListener('click',function(e){e.preventDefault();setAll(true);});
@@ -580,8 +652,11 @@ def developer_history(name):
     d = R.employee_history(issues, name)
     present = [st for st in cfg.STAGE_ORDER
                if any(s["stage"] == st for t in d["tickets"] for s in t["stages"])]
+    # Team-wide median time per stage, for the per-ticket outlier benchmarks.
+    team_median = {row["stage"]: row["median_days"] for row in R.status_duration(issues)["rows"]}
     return render_template_string(HIST_TMPL, d=d, fmt=fmt, hdur=hdur, agecls=agecls,
-                                  days=days, stage_colors=cfg.STAGE_COLORS, legend_stages=present)
+                                  days=days, stage_colors=cfg.STAGE_COLORS, legend_stages=present,
+                                  team_median=team_median)
 
 
 @app.route("/developer/<name>/history.csv")

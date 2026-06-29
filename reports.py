@@ -258,10 +258,29 @@ def employee_history(issues, person):
             "last_activity": last_activity,
         })
     tickets.sort(key=lambda t: t["last_activity"] or A.now_utc(), reverse=True)
+
+    # Aggregate for a plain-language insight line.
+    agg_stage = {}
+    reopened_tickets = stuck_tickets = 0
+    for t in tickets:
+        for s in t["stages"]:
+            agg_stage[s["stage"]] = agg_stage.get(s["stage"], 0) + s["days"]
+        if t["reopened"]:
+            reopened_tickets += 1
+        if t["days_in_current_stage"] and t["days_in_current_stage"] >= 10:
+            stuck_tickets += 1
+    top_stage = max(agg_stage, key=agg_stage.get) if agg_stage else None
+    insight = {
+        "top_stage": top_stage,
+        "top_stage_days": round(agg_stage[top_stage], 1) if top_stage else None,
+        "reopened_tickets": reopened_tickets,
+        "stuck_tickets": stuck_tickets,
+    }
     return {
         "person": person,
         "ticket_count": len(tickets),
         "active_days_total": round(total_active / 86400, 1),
+        "insight": insight,
         "tickets": tickets,
     }
 
