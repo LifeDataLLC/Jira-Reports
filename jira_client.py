@@ -161,6 +161,83 @@ def fetch_issues_by_time(time_clause: str) -> list[dict]:
     return search_issues(jql, REPORT_FIELDS, expand_changelog=True)
 
 
+# ---------------------------------------------------------------------------
+# Enriched dataset for the developer-discipline reports (comments, worklogs,
+# estimates, due dates, labels, sprint) — see dev_reports.py.
+# ---------------------------------------------------------------------------
+
+DEV_LOOKBACK_DAYS = int(os.environ.get("DEV_REPORTS_MAX_LOOKBACK_DAYS", "365"))
+
+
+@_cached
+def detect_custom_fields() -> dict:
+    """Find the instance's Story Points and Sprint custom field ids by name."""
+    out = {"story_points": os.environ.get("STORY_POINT_FIELD") or None, "sprint": None}
+    try:
+        resp = requests.get(f"{JIRA_BASE_URL}/rest/api/3/field", auth=_auth(),
+                            headers={"Accept": "application/json"}, timeout=60)
+        if resp.ok:
+            for f in resp.json():
+                name = (f.get("name") or "").lower()
+                if not out["story_points"] and name in ("story points", "story point estimate"):
+                    out["story_points"] = f.get("id")
+                if not out["sprint"] and name == "sprint":
+                    out["sprint"] = f.get("id")
+    except requests.RequestException:
+        pass
+    return out
+
+
+def _fetch_all_pages(url: str, list_key: str) -> list[dict]:
+    out, start = [], 0
+    while True:
+        r = requests.get(url, params={"startAt": start, "maxResults": 100},
+                         auth=_auth(), headers={"Accept": "application/json"}, timeout=60)
+        if not r.ok:
+            break
+        data = r.json()
+        vals = data.get(list_key, [])
+        out.extend(vals)
+        if start + len(vals) >= data.get("total", 0) or not vals:
+            break
+        start += len(vals)
+    return out
+
+
+@_cached
+def fetch_dev_dataset(project: str | None = None, lookback_days: int | None = None) -> list[dict]:
+    """
+    One broad pull for the 18 developer reports: every open issue plus anything
+    updated within the lookback, WITH changelog, comments, worklogs, and planning
+    fields. Comments/worklogs truncated by the search API are topped up per-issue.
+    """
+    lookback = lookback_days or DEV_LOOKBACK_DAYS
+    if project:
+        projects = f'"{project.strip()}"'
+    else:
+        projects = " ,".join(f'"{p.strip()}"' for p in PROJECT_KEYS)
+    cf = detect_custom_fields()
+    fields = ["summary", "status", "assignee", "reporter", "issuetype", "priority",
+              "created", "updated", "resolutiondate", "duedate", "labels",
+              "timeoriginalestimate", "comment", "worklog"]
+    fields += [v for v in (cf["story_points"], cf["sprint"]) if v]
+    jql = (f'project in ({projects}) AND ('
+           f'statusCategory != Done OR updated >= -{lookback}d) ORDER BY updated DESC')
+    issues = search_issues(jql, fields, expand_changelog=True)
+    # Top up truncated comment/worklog lists (search returns a capped page).
+    for raw in issues:
+        f = raw.get("fields", {})
+        c = f.get("comment") or {}
+        if c.get("total", 0) > len(c.get("comments", [])):
+            f["comment"] = {"comments": _fetch_all_pages(
+                f"{JIRA_BASE_URL}/rest/api/3/issue/{raw['key']}/comment", "comments")}
+        w = f.get("worklog") or {}
+        if w.get("total", 0) > len(w.get("worklogs", [])):
+            f["worklog"] = {"worklogs": _fetch_all_pages(
+                f"{JIRA_BASE_URL}/rest/api/3/issue/{raw['key']}/worklog", "worklogs")}
+    return issues
+
+
 @_cached
 def fetch_project_versions() -> list[dict]:
     out = []

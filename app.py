@@ -35,10 +35,14 @@ import jira_client as jc
 import reports as R
 import reports_web
 
+import dev_reports_web
+
 app = Flask(__name__)
 # Eight executive reports (daily movement, sprint, dev/QA productivity, status
 # duration, release readiness, executive dashboard, individual activity) live here.
 app.register_blueprint(reports_web.bp)
+# The 18 developer-discipline reports (Jira Developer Reports spec).
+app.register_blueprint(dev_reports_web.devbp)
 
 # ---- tiny in-memory cache so we don't hammer the Jira API on every refresh ----
 _CACHE: dict = {"data": None, "ts": 0.0}

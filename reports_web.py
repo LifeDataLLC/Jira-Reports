@@ -127,6 +127,7 @@ TOP = """
  <a href="/reports/time-in-status">Time in Status</a>
  <a href="/reports/release">Release</a>
  <a href="/reports/sprints">Sprints</a>
+ <a href="/dev-reports">Dev Reports</a>
  <a href="/">Workload (v0)</a>
 </nav>
 """ + LOADING_OVERLAY + """

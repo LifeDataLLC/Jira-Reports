@@ -143,6 +143,26 @@ RISK_WEIGHTS = {
 # Optional: story-point custom field id (auto-detected at runtime if blank).
 STORY_POINT_FIELD = os.environ.get("STORY_POINT_FIELD", "")
 
+# ---- Developer-discipline report settings (Jira Developer Reports spec) ----
+# Stage groupings used by the QA-handoff/return reports.
+DEV_STAGES = {STAGE_IN_PROGRESS, STAGE_DEVELOPMENT}
+QA_STAGES = {STAGE_READY_FOR_QA, STAGE_QA_TESTING}
+RETURN_TARGET_STAGES = DEV_STAGES | {STAGE_REOPENED}
+
+# Status Change Without Comment: a comment by the same author within this many
+# minutes of the transition counts as "explained".
+COMMENT_WINDOW_MIN = int(os.environ.get("COMMENT_WINDOW_MIN", "10"))
+
+# Handoff Quality keyword checks (comma-separated, case-insensitive substrings).
+HANDOFF_TEST_KEYWORDS = [k.strip().lower() for k in os.environ.get(
+    "HANDOFF_TEST_KEYWORDS", "test,steps,verify,qa,reproduce,scenario").split(",") if k.strip()]
+HANDOFF_PR_KEYWORDS = [k.strip().lower() for k in os.environ.get(
+    "HANDOFF_PR_KEYWORDS", "pr,pull request,merge,commit,branch,build,github,bitbucket").split(",") if k.strip()]
+
+# Blocked Tickets: labels that mark a ticket as blocked.
+BLOCKED_LABELS = {k.strip().lower() for k in os.environ.get(
+    "BLOCKED_LABELS", "blocked,dependency,waiting").split(",") if k.strip()}
+
 # Optional: Agile board id(s) for sprint reports (comma-separated). Blank disables
 # the sprint report gracefully.
 BOARD_IDS = [b for b in os.environ.get("JIRA_BOARD_IDS", "").split(",") if b.strip()]

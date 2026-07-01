@@ -73,6 +73,15 @@ like *"In Progress / Start Investigation"* are handled automatically.
 | `/reports/sprints` | Sprint Health — needs `JIRA_BOARD_IDS` configured |
 | `/api/reports.json` | All report data as JSON |
 
+**Developer Reports (18 discipline/productivity reports):**
+
+| URL | What |
+|-----|------|
+| `/dev-reports` | Catalog of all 18 reports, grouped by recommended cadence |
+| `/dev-reports/<slug>` | Any report with the common filters (project, developer, start/end date); CSV at `/dev-reports/<slug>.csv` |
+
+The 18 reports (per the *Jira Developer Reports Definition* spec): Daily Developer Activity, Silent Tickets, Multiple Active Tickets, End-of-Day Discipline, Ready for QA Contribution, Returned from QA, Cycle Time by Developer, Stuck Ticket Aging, Worklog Completeness, Tickets Without Estimate, Overdue Tickets, Developer Handoff Quality, Status Change Without Comment, Blocked Tickets, Sprint Commitment vs Completion, Ticket Movement Timeline, Developer Focus, and Bug Fix Quality. These pull an enriched dataset (comments, worklogs, estimates, story points, labels, sprint field) — extra knobs: `DEV_REPORTS_MAX_LOOKBACK_DAYS` (default 365), `COMMENT_WINDOW_MIN` (default 10), `HANDOFF_TEST_KEYWORDS`, `HANDOFF_PR_KEYWORDS`, `BLOCKED_LABELS`.
+
 > Per-developer detail (Individual Activity) lives on the `/developer/<name>` page above.
 
 ### Configuration for the executive reports
