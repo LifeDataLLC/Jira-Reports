@@ -54,3 +54,16 @@
   return-rate trend. CSV + `/api/v2/quality.*`.
 - `metrics_glossary.py`: single definitions dict rendered as hover tooltips
   (FR-U5) so UI and docs cannot drift.
+
+### Phase 4 — Process-gated features (built dark)
+- `planning.py`: due-date slip metrics (original = first changelog value, push
+  count, slip days), start-date Reschedule Count + Total Days Pushed, missing-
+  date and no-estimate checks — all behind their gates; flipping a gate lights
+  them up with zero deploy.
+- Attention Board Overdue / Missing-dates reasons now activate with the gates;
+  Blocked (Flagged changelog primary, labels low-confidence) live from Phase 1.
+- Disposition compliance metric (% dispositioned within 48h, stateless from
+  the changelog) on the new /planning screen.
+- /planning: sprint teaching empty state, Release Readiness as interim
+  commitment view, hygiene tables; docs/jira_process_setup.md documents each
+  feature's Jira-side prerequisite.

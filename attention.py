@@ -101,6 +101,26 @@ def disposition_state(issue, now) -> dict | None:
             "overdue_48h": hours_open > 48}
 
 
+def disposition_compliance(issues, now=None) -> dict:
+    """FR-A3: of tickets that crossed their aging threshold, % dispositioned
+    (moved to Backlog or given a future start date) within 48h."""
+    now = now or A.now_utc()
+    flagged = dispositioned = within = 0
+    for i in issues:
+        if st.bucket_of(i.status, i.category) == "done":
+            continue
+        d = disposition_state(i, now)
+        if not d:
+            continue
+        flagged += 1
+        if d["state"] == "dispositioned":
+            dispositioned += 1
+            if d["within_48h"]:
+                within += 1
+    return {"flagged": flagged, "dispositioned": dispositioned, "within_48h": within,
+            "pct": round(100 * within / flagged) if flagged else None}
+
+
 def board(issues, developer=None, reason_filter=None, match=None, now=None) -> dict:
     now = now or A.now_utc()
     rows = []

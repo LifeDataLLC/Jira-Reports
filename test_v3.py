@@ -299,6 +299,88 @@ def test_flow_quality():
                                         for i in range(len(b)-1)))
 
 
+# ---------------------------------------------------------------------------
+# Phase 4 — gated planning features
+# ---------------------------------------------------------------------------
+
+def test_planning_gated():
+    import dev_reports as dr
+    import planning as pl
+    # Ticket with a pushed due date (2026-07-01 -> 2026-07-08 -> 2026-07-15) and
+    # two start-date moves.
+    raw = mkraw("P-1", "Development / In Design", "In Progress",
+                duedate="2026-07-15", events=[
+        (9, "Jane Doe", "status", "To Do", "Development / In Design"),
+        (8, "Jane Doe", "duedate", "2026-07-01", "2026-07-08"),
+        (4, "Jane Doe", "duedate", "2026-07-08", "2026-07-15"),
+        (7, "Jane Doe", "Start date", "2026-06-20", "2026-06-25"),
+        (3, "Jane Doe", "Start date", "2026-06-25", "2026-07-02"),
+    ])
+    issues = dr.load_dev_issues([raw])
+    i = issues[0]
+    sm = pl.slip_metrics(i)
+    check("original due = first from-value", sm["original"] == dt.date(2026, 7, 1))
+    check("push count", sm["pushes"] == 2)
+    check("slip days", sm["slip_days"] == 14)
+    rm = pl.reschedule_metrics(i)
+    check("reschedule count", rm["count"] == 2)
+    check("days pushed", rm["days_pushed"] == 12)
+
+    # Gates OFF -> hygiene returns empty (ships dark)
+    s = st.load()
+    for g in s["gates"]:
+        s["gates"][g] = False
+    st.save(s)
+    h = pl.hygiene(issues)
+    check("hygiene dark when gates off",
+          not h["missing"] and not h["slips"] and not h["reschedules"])
+    # Flip gates -> features light up with zero deploy
+    s["gates"]["due_dates_required"] = True
+    s["gates"]["start_dates_required"] = True
+    st.save(s)
+    h = pl.hygiene(issues)
+    check("slip table lights up", len(h["slips"]) == 1 and h["slips"][0]["slip_days"] == 14)
+    check("reschedules light up", len(h["reschedules"]) == 1)
+    check("missing start date flagged", len(h["missing"]) == 1
+          and "start date" in h["missing"][0]["missing"])
+    # attention gains Overdue + Missing dates reasons when gated on
+    import attention
+    over = mkraw("P-2", "Development / In Design", "In Progress",
+                 duedate=(now - dt.timedelta(days=3)).date().isoformat(), events=[
+        (2, "Jane Doe", "status", "To Do", "Development / In Design")])
+    d = attention.board(dr.load_dev_issues([over]), now=now)
+    kinds = {r["kind"] for row in d["rows"] for r in row["reasons"]}
+    check("overdue reason when gate on", "overdue" in kinds)
+    s["gates"]["due_dates_required"] = False
+    s["gates"]["start_dates_required"] = False
+    st.save(s)
+    d2 = attention.board(dr.load_dev_issues([over]), now=now)
+    kinds2 = {r["kind"] for row in d2["rows"] for r in row["reasons"]}
+    check("overdue dark when gate off", "overdue" not in kinds2)
+
+
+def test_disposition():
+    import attention
+    import dev_reports as dr
+    # Over threshold (active_dev default 5d): entered status 10d ago; moved to
+    # Backlog 3d ago -> dispositioned, but NOT within 48h of crossing (crossed 5d ago).
+    raw = mkraw("D-1", "To Do", "To Do", events=[
+        (10, "Jane Doe", "status", "To Do", "Development / In Design"),
+        (3, "Jane Doe", "status", "Development / In Design", "Backlog"),
+    ])
+    i = dr.load_dev_issues([raw])[0]
+    # simulate: currently in Backlog; disposition_state checks the CURRENT status
+    # threshold — Backlog (todo) has none, so evaluate the pre-move ticket instead.
+    raw2 = mkraw("D-2", "Development / In Design", "In Progress", events=[
+        (10, "Jane Doe", "status", "To Do", "Development / In Design")])
+    i2 = dr.load_dev_issues([raw2])[0]
+    d = attention.disposition_state(i2, now)
+    check("needs disposition after threshold", d and d["state"] == "needs_disposition")
+    check("48h breach detected", d["overdue_48h"] is True)
+    comp = attention.disposition_compliance(dr.load_dev_issues([raw2]), now)
+    check("compliance counts flagged", comp["flagged"] == 1 and comp["within_48h"] == 0)
+
+
 def test_routes():
     import app
     import jira_client as jc
