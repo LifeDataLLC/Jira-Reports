@@ -43,6 +43,9 @@ app = Flask(__name__)
 app.register_blueprint(reports_web.bp)
 # The 18 developer-discipline reports (Jira Developer Reports spec).
 app.register_blueprint(dev_reports_web.devbp)
+# v3 screens: Settings, My Day, Attention, QA, Flow, Quality, Planning, Investigator.
+import screens_web
+app.register_blueprint(screens_web.v3)
 
 # ---- tiny in-memory cache so we don't hammer the Jira API on every refresh ----
 _CACHE: dict = {"data": None, "ts": 0.0}
