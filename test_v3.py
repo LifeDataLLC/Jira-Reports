@@ -186,6 +186,65 @@ def test_attention():
           for row in d2["rows"] for r in row["reasons"]))
 
 
+# ---------------------------------------------------------------------------
+# Phase 2 — QA handoff edges + investigator gaps
+# ---------------------------------------------------------------------------
+
+def test_qa_handoff():
+    import dev_reports as dr
+    import qa_handoff as qh
+    # Jane hands off with comment+PR link; QA Bob returns it; Jane hands off again.
+    raw = mkraw("Q-1", "Ready for QA (QA Env)", "In Progress", events=[
+        (10, "Jane Doe", "status", "Development / In Design", "Ready for QA (QA Env)"),
+        (8, "QA Bob", "status", "Ready for QA (QA Env)", "Reopen"),
+        (5, "Jane Doe", "status", "Reopen", "Ready for QA (QA Env)"),
+    ], comments=[
+        (10, 60, "Jane Doe", "Handoff: see https://github.com/lifedata/x/pull/42 test steps inside"),
+        (8, 2, "QA Bob", "fails on login step"),
+    ])
+    # A skip-RFQA edge: straight from active_dev into QA Testing (still a handoff).
+    raw2 = mkraw("Q-2", "In QA Testing (QA Env)", "In Progress", events=[
+        (3, "Sam Lee", "status", "Development / In Design", "In QA Testing (QA Env)")])
+    issues = dr.load_dev_issues([raw, raw2])
+
+    h = qh.handoff_feed(issues, match=dr._dev_match)
+    check("three handoffs (incl. skip-RFQA edge)", len(h) == 3)
+    jane_first = [x for x in h if x["issue"].key == "Q-1"][-1]
+    check("handoff comment within window", jane_first["has_comment"] is True)
+    check("PR url detected", jane_first["has_pr"] is True)
+    check("pass result", jane_first["result"] == "Pass")
+    sam = [x for x in h if x["issue"].key == "Q-2"][0]
+    check("needs info when no comment", sam["result"] == "Needs info")
+
+    r = qh.returned_feed(issues, match=dr._dev_match)
+    check("one return", len(r) == 1 and r[0]["returned_by"] == "QA Bob")
+    check("return reason captured", "fails on login" in r[0]["reason"])
+
+    rates = qh.return_rates(issues)
+    jane = [x for x in rates if x["developer"] == "Jane Doe"][0]
+    check("return attributed to handoff author", jane["handoffs"] == 2 and jane["returns"] == 1)
+    check("raw counts in rate label", "(1 of 2)" in jane["rate_label"])
+
+
+def test_investigator_gaps():
+    import app
+    import dev_reports as dr
+    import jira_client as jc
+    raw = mkraw("G-1", "Development / In Design", "In Progress", created_d=40, events=[
+        (30, "Jane Doe", "status", "To Do", "Development / In Design"),
+        (2, "Jane Doe", "status", "Development / In Design", "Development / In Design")])
+    jc.fetch_dev_dataset = lambda project=None, lookback_days=None: [raw]
+    jc.detect_custom_fields = lambda: {"story_points": None, "sprint": None, "start_date": None}
+    c = app.app.test_client()
+    h = c.get("/investigate?key=g-1").get_data(as_text=True)
+    check("investigator resolves key case-insensitively", "G-1" in h)
+    check("gap spacer rendered", "days — no activity" in h)
+    check("stage ribbon rendered", "Active Dev" in h)
+    check("deep link", "browse/G-1" in h)
+    h2 = c.get("/investigate").get_data(as_text=True)
+    check("investigator teaches without key", "Enter an issue key" in h2)
+
+
 def test_routes():
     import app
     import jira_client as jc

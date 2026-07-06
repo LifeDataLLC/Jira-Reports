@@ -526,14 +526,6 @@ SHELL_TMPL = """
 """
 
 
-@v3.route("/qa")
-def qa_shell():
-    return page(SHELL_TMPL, active="/qa", title="QA Handoff",
-                sub="Handoff feed, handoff checks, returned-from-QA",
-                teach="This screen arrives in Phase 2 of the v3 rollout.",
-                links="")
-
-
 @v3.route("/flow")
 def flow_shell():
     return page(SHELL_TMPL, active="/flow", title="Flow Analytics",
@@ -557,8 +549,201 @@ def planning_shell():
                 links='<a class="btn" href="/reports/release">Release Readiness →</a>')
 
 
+# ---------------------------------------------------------------------------
+# Screen 3 — QA Handoff (FR-Q1..Q4)
+# ---------------------------------------------------------------------------
+
+QA_TMPL = """
+<h1>QA Handoff</h1>
+<div class="sub">Handoffs credited to the transition author · checks are binary Pass / Needs info</div>
+""" + FILTER_BAR + """
+<h2>Return rate by developer <span class="muted">(returns attributed to the most recent handoff author)</span></h2>
+<table>
+<tr><th>Developer</th><th>Handoffs</th><th>Returns</th><th>Return rate</th></tr>
+{% for r in rates %}
+<tr><td>{{ r.developer }}</td><td>{{ r.handoffs }}</td><td>{{ r.returns }}</td>
+<td><span class="pill {{ 'ok' if (r.rate_pct or 0) < 25 else ('warn' if (r.rate_pct or 0) < 50 else 'bad') }}">{{ r.rate_label }}</span></td></tr>
+{% else %}<tr><td colspan="4" class="muted">No handoffs in the window.</td></tr>{% endfor %}
+</table>
+
+<h2>Handoff feed <span class="muted">(transitions into QA)</span> · <a href="/api/v2/handoffs.csv?{{ request.query_string.decode() }}" download>CSV</a></h2>
+<table>
+<tr><th>When</th><th>Moved by</th><th>Issue</th><th>Summary</th><th>Previous → New</th><th>Current status</th><th>Assignee now</th><th>Comment</th><th>PR/build</th><th>Result</th></tr>
+{% for h in handoffs %}
+<tr><td>{{ h.ts.strftime('%Y-%m-%d %H:%M') }}</td><td>{{ h.developer }}</td>
+<td><a href="{{ h.issue.url }}" target="_blank">{{ h.issue.key }}</a></td><td>{{ h.issue.summary }}</td>
+<td>{{ h.prev_status }} → {{ h.new_status }}</td><td>{{ h.issue.status }}</td><td>{{ h.issue.assignee }}</td>
+<td>{{ '✓' if h.has_comment else '✗' }}</td><td>{{ '✓' if h.has_pr else '✗' }}</td>
+<td><span class="pill {{ 'ok' if h.result=='Pass' else 'warn' }}">{{ h.result }}</span></td></tr>
+{% else %}<tr><td colspan="10" class="muted">No handoffs in the window.</td></tr>{% endfor %}
+</table>
+
+<h2>Returned from QA <span class="muted">(back-transitions)</span> · <a href="/api/v2/returns.csv?{{ request.query_string.decode() }}" download>CSV</a></h2>
+<table>
+<tr><th>When</th><th>Returned by</th><th>Issue</th><th>Summary</th><th>From → To</th><th>Current developer</th><th>Return reason</th></tr>
+{% for r in returns %}
+<tr><td>{{ r.ts.strftime('%Y-%m-%d %H:%M') }}</td><td>{{ r.returned_by }}</td>
+<td><a href="{{ r.issue.url }}" target="_blank">{{ r.issue.key }}</a></td><td>{{ r.issue.summary }}</td>
+<td>{{ r.from_status }} → {{ r.to_status }}</td><td>{{ r.issue.assignee }}</td>
+<td class="muted">{{ r.reason[:140] if r.reason else '— no comment near transition —' }}</td></tr>
+{% else %}<tr><td colspan="7" class="muted">No returns in the window.</td></tr>{% endfor %}
+</table>
+"""
+
+
+def _qa_data():
+    import qa_handoff as qh
+    project, developer, start, end = parse_filters()
+    if not start and not end:
+        start = A.now_utc() - dt.timedelta(days=14)
+    issues = _issues(project)
+    return (qh.handoff_feed(issues, developer, start, end, dr._dev_match),
+            qh.returned_feed(issues, developer, start, end, dr._dev_match),
+            qh.return_rates(issues, start, end))
+
+
+@v3.route("/qa")
+def qa_screen():
+    handoffs, returns, rates = _qa_data()
+    return page(QA_TMPL, active="/qa", handoffs=handoffs, returns=returns, rates=rates)
+
+
+@v3.route("/api/v2/handoffs.csv")
+def handoffs_csv():
+    handoffs, _r, _ra = _qa_data()
+    rows = [[h["ts"].strftime("%Y-%m-%d %H:%M"), h["developer"], h["issue"].key,
+             h["issue"].summary, h["prev_status"], h["new_status"], h["issue"].status,
+             h["issue"].assignee, "Yes" if h["has_comment"] else "No",
+             "Yes" if h["has_pr"] else "No", h["result"]] for h in handoffs]
+    return csv_response(["When", "Moved by", "Issue", "Summary", "Previous", "New",
+                         "Current status", "Current assignee", "Handoff comment",
+                         "PR reference", "Result"], rows, "qa_handoffs.csv")
+
+
+@v3.route("/api/v2/returns.csv")
+def returns_csv():
+    _h, returns, _ra = _qa_data()
+    rows = [[r["ts"].strftime("%Y-%m-%d %H:%M"), r["returned_by"], r["issue"].key,
+             r["issue"].summary, r["from_status"], r["to_status"], r["issue"].assignee,
+             r["reason"][:200]] for r in returns]
+    return csv_response(["When", "Returned by", "Issue", "Summary", "From", "To",
+                         "Current developer", "Reason"], rows, "qa_returns.csv")
+
+
+@v3.route("/api/v2/qa.json")
+def qa_json():
+    handoffs, returns, rates = _qa_data()
+    return jsonify({
+        "rates": rates,
+        "handoffs": [{"ts": h["ts"].isoformat(), "developer": h["developer"],
+                      "key": h["issue"].key, "result": h["result"]} for h in handoffs],
+        "returns": [{"ts": r["ts"].isoformat(), "returned_by": r["returned_by"],
+                     "key": r["issue"].key, "reason": r["reason"][:200]} for r in returns]})
+
+
+# ---------------------------------------------------------------------------
+# Screen 7 — Ticket Investigator (FR-T1..T4)
+# ---------------------------------------------------------------------------
+
+BUCKET_COLORS = {"todo": "#8993a4", "active_dev": "#0065ff", "qa_stage": "#ffab00",
+                 "paused": "#ff7452", "rework": "#de350b", "done": "#36b37e",
+                 None: "#c1c7d0"}
+
+INVEST_TMPL = """
+<h1>Ticket Investigator</h1>
+<div class="sub">Full forensic timeline for one ticket — transitions, comments, worklogs, field changes</div>
+<form method="get" class="filterbar">
+  <label>Issue key<input name="key" value="{{ request.args.get('key','') }}" placeholder="LIFEDATAV2-1234" required></label>
+  <label>From<input type="date" name="start" value="{{ request.args.get('start','') }}"></label>
+  <label>To<input type="date" name="end" value="{{ request.args.get('end','') }}"></label>
+  <button class="btn" type="submit">Investigate</button>
+</form>
+{% if err %}<div class="banner">{{ err }}</div>{% endif %}
+{% if issue %}
+<div class="sectionbox">
+  <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">
+    <div><a href="{{ issue.url }}" target="_blank"><b>{{ issue.key }}</b></a> {{ issue.summary }}</div>
+    <div><span class="pill">{{ issue.type }}</span> <span class="pill">{{ issue.status }}</span> <span class="pill">{{ issue.assignee }}</span>
+    <a class="btn-ghost" href="{{ issue.url }}" target="_blank">Open in Jira ↗</a></div>
+  </div>
+  {% if ribbon %}
+  <div style="display:flex;height:22px;border-radius:6px;overflow:hidden;margin-top:12px;font-size:11px;color:#fff;font-weight:600">
+    {% for seg in ribbon %}<div title="{{ seg.label }}: {{ seg.days }}d ({{ seg.pct }}%)"
+      style="width:{{ seg.pct }}%;background:{{ seg.color }};display:flex;align-items:center;justify-content:center;overflow:hidden;text-shadow:0 1px 1px rgba(0,0,0,.35)">{% if seg.pct >= 10 %}{{ seg.label }} {{ seg.days }}d{% endif %}</div>{% endfor %}
+  </div>
+  <div class="muted" style="margin-top:4px">{% for seg in ribbon %}<span style="margin-right:12px"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:{{ seg.color }};margin-right:3px"></span>{{ seg.label }} {{ seg.days }}d</span>{% endfor %}</div>
+  {% endif %}
+</div>
+<div style="border-left:2px solid #dfe1e6;margin-left:10px;padding-left:22px">
+  {% for item in timeline %}
+    {% if item.gap %}
+    <div style="margin:14px 0;padding:8px 14px;background:#fff7e6;border:1px dashed #ffc46b;border-radius:8px;display:inline-block;color:#974f00;font-size:13px">
+      ⏸ {{ item.gap }} days — no activity</div>
+    {% else %}
+    <div style="margin:10px 0;position:relative">
+      <span style="position:absolute;left:-29px;top:3px;width:12px;height:12px;border-radius:50%;background:{{ item.color }};border:2px solid #fff;box-shadow:0 0 0 1px #dfe1e6"></span>
+      <span class="muted">{{ item.e.ts.strftime('%Y-%m-%d %H:%M') }}</span>
+      <b style="margin:0 6px">{{ item.icon }} {{ item.e.kind }}</b>
+      <span>{{ item.e.actor }}</span>
+      {% if item.e.kind in ('status','assignee','duedate','startdate','flag','sprint') %}
+        <span class="muted">{{ item.e.frm or '—' }} → {{ item.e.to or '—' }}</span>
+      {% elif item.e.kind == 'worklog' %}
+        <span class="pill">{{ (item.e.seconds/3600)|round(1) }}h</span> <span class="muted">{{ item.e.detail[:120] }}</span>
+      {% else %}
+        <div class="muted" style="margin:2px 0 0 6px;max-width:820px">{{ item.e.detail[:400] }}</div>
+      {% endif %}
+    </div>
+    {% endif %}
+  {% else %}<p class="muted">No events in the selected range.</p>{% endfor %}
+</div>
+{% elif not request.args.get('key') %}
+<div class="sectionbox"><p class="muted">Enter an issue key to reconstruct its full history. The Investigator answers
+“why did this ticket take six weeks?” — inactivity gaps, reopen loops, and QA parking become visible at a glance.</p></div>
+{% endif %}
+"""
+
+_EVENT_ICON = {"status": "⇄", "assignee": "👤", "comment": "💬", "worklog": "⏱",
+               "duedate": "📅", "startdate": "📅", "flag": "🚩", "sprint": "🏁"}
+
+
 @v3.route("/investigate")
-def investigate_shell():
-    return page(SHELL_TMPL, active="/investigate", title="Ticket Investigator",
-                sub="Full forensic timeline for one ticket",
-                teach="The timeline UI arrives in Phase 2 of the v3 rollout.", links="")
+def investigate_screen():
+    key = (request.args.get("key") or "").strip().upper()
+    if not key:
+        return page(INVEST_TMPL, active="/investigate", issue=None, err=None)
+    _p, _d, start, end = parse_filters()
+    issue = next((i for i in _issues(None) if i.key.upper() == key), None)
+    if issue is None:
+        try:
+            raw = jc.fetch_single_issue(key)  # live, uncached, full history
+        except Exception:
+            raw = None
+        if raw:
+            issue = dr.load_dev_issues([raw], jc.detect_custom_fields())[0]
+    if issue is None:
+        return page(INVEST_TMPL, active="/investigate", issue=None,
+                    err=f"Issue {key} not found (or Jira unreachable). Check the key.")
+    events = [e for e in activity.events_for(issue)
+              if (not start or e.ts >= start) and (not end or e.ts < end)]
+    gap_days = st.load()["gap_days"]
+    timeline, prev = [], None
+    for e in events:
+        if prev is not None:
+            gap = (e.ts - prev).total_seconds() / 86400
+            if gap >= gap_days:
+                timeline.append({"gap": round(gap)})
+        timeline.append({"e": e, "icon": _EVENT_ICON.get(e.kind, "•"),
+                         "color": "#0065ff" if e.kind == "status" else "#c1c7d0", "gap": None})
+        prev = e.ts
+    # Stage ribbon (FR-T3): lifetime seconds per bucket from the status timeline.
+    per_bucket = {}
+    for status, enter, exit_ in issue.timeline.segments:
+        b = st.bucket_of(status) or "unmapped"
+        per_bucket[b] = per_bucket.get(b, 0) + (exit_ - enter).total_seconds()
+    total = sum(per_bucket.values()) or 1
+    ribbon = [{"label": st.BUCKET_LABELS.get(b, b), "days": round(secs / 86400, 1),
+               "pct": round(100 * secs / total, 1),
+               "color": BUCKET_COLORS.get(b if b != "unmapped" else None)}
+              for b, secs in sorted(per_bucket.items(), key=lambda kv: -kv[1]) if secs > 0]
+    return page(INVEST_TMPL, active="/investigate", issue=issue, err=None,
+                timeline=timeline, ribbon=ribbon)

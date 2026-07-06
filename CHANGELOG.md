@@ -28,3 +28,16 @@
   Productivity, Status Duration pages and the /dev-reports catalog now 301 to
   their v3 screens with hit logging; engines retained. /api/reports.json gains
   a deprecation notice; old planning docs archived under docs/.
+
+### Phase 2 — QA Handoff + Ticket Investigator
+- `qa_handoff.py`: bucket-edge-driven handoff feed (any entry into qa_stage
+  counts, incl. skip-RFQA edges), binary Pass/Needs-info checks (handoff comment
+  within the configured window + PR/build URL or keyword), returned-from-QA feed
+  with return-reason comments, and return-rate summary attributed to the most
+  recent handoff author — raw counts always shown.
+- `/qa` screen + CSV/JSON exports (`/api/v2/handoffs.csv`, `/api/v2/returns.csv`,
+  `/api/v2/qa.json`).
+- `/investigate`: full chronological timeline (transitions, assignee changes,
+  comments, worklogs, field changes) with inactivity-gap spacers (configurable),
+  bucket stage-duration ribbon, Jira deep link, optional date range; falls back
+  to a live uncached single-issue fetch when the key is outside the sync window.
