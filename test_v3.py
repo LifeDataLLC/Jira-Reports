@@ -8,8 +8,9 @@ import datetime as dt
 import os
 import tempfile
 
-os.environ.setdefault("APP_CONFIG_PATH",
-                      os.path.join(tempfile.mkdtemp(prefix="jira_v3_test_"), "settings.json"))
+_tmp = tempfile.mkdtemp(prefix="jira_v3_test_")
+os.environ.setdefault("APP_CONFIG_PATH", os.path.join(_tmp, "settings.json"))
+os.environ.setdefault("SNAPSHOT_DB_PATH", os.path.join(_tmp, "snapshots.db"))
 
 import analytics as A  # noqa: E402
 import settings as st  # noqa: E402
@@ -403,8 +404,51 @@ def test_routes():
         r = c.get(route)
         check(f"200 {route}", r.status_code == 200)
     # kept routes still live
-    for route in ["/reports/time-in-status", "/reports/release", "/exec"]:
+    for route in ["/reports/time-in-status", "/reports/release", "/exec/kpis"]:
         check(f"kept {route}", c.get(route).status_code == 200)
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — snapshots, trends, meeting mode, digest, sprint gating
+# ---------------------------------------------------------------------------
+
+def test_snapshots_and_trends():
+    import app
+    import dev_reports as dr
+    import digest as dg
+    import jira_client as jc
+    import snapshots as sn
+    raw = mkraw("S-1", "Development / In Design", "In Progress", events=[
+        (3, "Jane Doe", "status", "To Do", "Development / In Design")],
+        comments=[(0, 0, "Jane Doe", "daily update")])
+    issues = dr.load_dev_issues([raw])
+    agg = sn.compute_aggregates(issues, now=now)
+    check("aggregate has no names", "Jane" not in str(agg))
+    check("eod pct computed", agg["eod_signal_pct"] == 100)
+    sn.take(issues, day=dt.date(2026, 6, 29), now=now)
+    sn.take(issues, day=dt.date(2026, 7, 6), now=now)
+    s = sn.series()
+    check("two snapshots stored", len(s) == 2 and s[0]["day"] == "2026-07-06")
+    wow = sn.week_over_week()
+    check("wow delta computed", wow["eod_signal_pct"]["delta"] == 0)
+
+    card = dg.build_card([], agg)
+    check("digest card shape", card["attachments"][0]["content"]["type"] == "AdaptiveCard")
+    check("digest without webhook returns False", dg.send([], agg) is False)
+
+    jc.fetch_dev_dataset = lambda project=None, lookback_days=None: [raw]
+    jc.detect_custom_fields = lambda: {"story_points": None, "sprint": None, "start_date": None}
+    c = app.app.test_client()
+    h = c.get("/exec").get_data(as_text=True)
+    check("trends renders aggregates", "EOD signal" in h and "Meeting Mode" in h)
+    hm = c.get("/exec?meeting=1").get_data(as_text=True)
+    check("meeting mode hides names / shows distributions", "Distributions" in hm
+          and "Jane Doe" not in hm)
+    r = c.get("/tasks/snapshot")
+    check("snapshot endpoint ok", r.status_code == 200 and r.get_json()["ok"] is True)
+    # sprint gating from settings: gate off -> teaching empty state
+    h = c.get("/reports/sprints").get_data(as_text=True)
+    check("sprint teaching state when gated off", "board id" in h.lower())
 
 
 if __name__ == "__main__":

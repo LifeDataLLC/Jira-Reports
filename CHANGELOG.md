@@ -67,3 +67,17 @@
 - /planning: sprint teaching empty state, Release Readiness as interim
   commitment view, hygiene tables; docs/jira_process_setup.md documents each
   feature's Jira-side prerequisite.
+
+### Phase 5 — Trends, Meeting Mode, snapshots, digest, role landing
+- `snapshots.py`: SQLite daily team aggregates (no individual names) +
+  week-over-week deltas; `POST /tasks/snapshot` endpoint for cron/WebJob.
+- `/exec` is now Team Trends: six aggregate cards with wk/wk deltas and a
+  **Meeting Mode** (names hidden, distributions, large type); the legacy KPI
+  dashboard moved to `/exec/kpis`.
+- `digest.py`: Teams Adaptive Card morning digest (top 5 attention items +
+  4 aggregates) via `?digest=1` on the snapshot endpoint; webhook URL in
+  Settings (the one permitted settings secret).
+- Sprint Health now gated by Settings (`sprints_enabled` + board IDs) instead
+  of env, with the teaching empty state.
+- Role-based landing on `/` (developer→My Day, lead→Attention, exec→Trends)
+  via `?role=` or the Settings default.

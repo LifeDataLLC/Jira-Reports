@@ -14,8 +14,20 @@ metrics derive from the issue changelog. See `README.md` for features/usage and 
 ## Architecture (keep these layers separate)
 
 ```
-jira_client.py   REST transport: search, changelog, versions, sprints. Auth via env.
-analytics.py     Pure changelog math: timeline reconstruction, durations, transitions.
+jira_client.py   REST transport: search, changelog, comments, worklogs, versions,
+                 sprints, custom-field detection. Auth via env.
+analytics.py     Pure changelog math: timeline reconstruction, durations,
+                 transitions, percentiles.
+settings.py      Persistent admin config: status->bucket map, thresholds, gates
+                 (APP_CONFIG_PATH json). EDIT VIA /settings, not code.
+activity.py      Unified event feed (transitions/comments/worklogs/field changes).
+checklist.py     My Day checklist engine. attention.py: Attention Board reasons.
+qa_handoff.py    Handoff/return edges + checks. flow_quality.py: cycle/bottleneck/
+                 bug-lens engines. planning.py: date-discipline metrics (gated).
+snapshots.py     SQLite daily aggregates. digest.py: Teams webhook card.
+screens_web.py   v3 screens (My Day/Attention/QA/Flow/Quality/Planning/
+                 Investigator/Trends/Settings) + nav + filter bar.
+metrics_glossary.py  Single source of metric definitions (UI tooltips).
 config.py        Status-name -> logical-stage mapping + tunable settings. EDIT HERE
                  when the workflow changes; no other module should hard-code statuses.
 reports.py       The 8 report builders + time-in-status. Operates on in-memory issues.

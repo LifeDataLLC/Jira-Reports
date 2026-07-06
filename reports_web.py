@@ -165,7 +165,7 @@ EXEC = """
 """
 
 
-@bp.route("/exec")
+@bp.route("/exec/kpis")
 def exec_dashboard():
     d = R.executive_dashboard(dataset(), days_back=cfg.STUCK_THRESHOLD_DAYS if False else 7)
     return page(EXEC, d=d, projects=", ".join(jc.PROJECT_KEYS),
@@ -258,7 +258,9 @@ uses sprints, so once a board is configured this report populates automatically.
 
 @bp.route("/reports/sprints")
 def sprints():
-    if not cfg.BOARD_IDS:
+    import settings as _st
+    s = _st.load()
+    if not (s["gates"].get("sprints_enabled") and s.get("board_ids")):
         return page(SPRINT, configured=False, sprints=[])
     return page(SPRINT, configured=True, sprints=R.sprint_health(jc.fetch_active_sprints()))
 

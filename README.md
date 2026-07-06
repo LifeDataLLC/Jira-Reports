@@ -47,42 +47,33 @@ like *"In Progress / Start Investigation"* are handled automatically.
    # open http://localhost:5000
    ```
 
-## Pages
+## Screens (v3)
 
-**Workload views (v0):**
+Navigation is grouped by purpose (PRD v3). The global filter bar (project /
+developer / date range) follows you across screens.
 
-| URL | What |
-|-----|------|
-| `/` | Team overview + per-developer summary table |
-| `/developer/<name>` | One developer's in-progress / completed / assigned detail, with filters (ticket type, status, min open age) and CSV download at `/developer/<name>/report.csv` |
-| `/developer/<name>/history` | **Full activity history** — every ticket the person worked on, time spent per ticket, time in each status, and the complete status-transition log (with who moved it). CSV at `/developer/<name>/history.csv`. Lookback via `?days=N` (default 365) |
-| `/report.xlsx` | Download the workload report as an Excel workbook |
-| `/api/report.json` | Raw JSON |
+| Screen | URL | What |
+|--------|-----|------|
+| My Day | `/my-day` | Per-ticket end-of-day checklist (traffic-light checks, gate-aware); roll-up at `/my-day/rollup`; raw activity feed at `/my-day/feed` |
+| Attention Board | `/attention` | Every ticket needing intervention with stacked reason chips (Silent / Aging / Overdue / Blocked / Needs disposition / Missing dates), severity-sorted |
+| QA Handoff | `/qa` | Handoff feed (transition-author credited), binary Pass/Needs-info checks, returned-from-QA with reasons, return rates with raw counts |
+| Flow Analytics | `/flow` | Median/p85 cycle stats, per-ticket stage bars, bottleneck medians, multiple-active rule, focus view; Time in Status at `/reports/time-in-status` |
+| Quality | `/quality` | Bug lens (median resolution), reopen loops, weekly return-rate trend |
+| Sprint & Planning | `/planning` | Release Readiness interim view, sprint teaching state, gated hygiene/slip/reschedule tables, disposition compliance |
+| Ticket Investigator | `/investigate?key=…` | Full forensic timeline with inactivity gaps and stage ribbon |
+| Team Trends | `/exec` | Aggregates + week-over-week deltas, **Meeting Mode** (`?meeting=1`); legacy KPI dashboard at `/exec/kpis` |
+| Settings | `/settings` | Status→bucket mapping, thresholds, feature gates, checklist config, keywords, board IDs, webhook |
 
-**Executive Reporting Framework:**
+Per-developer drill-downs from the old app remain at `/developer/<name>` and
+`/developer/<name>/history`. Exports: CSV on every table, JSON under `/api/v2/`
+(the combined `/api/reports.json` is deprecated but still responds).
+Scheduled tasks: `POST /tasks/snapshot` stores the daily trend snapshot;
+`?digest=1` also posts the Teams morning digest.
 
-| URL | Report |
-|-----|--------|
-| `/exec` | Executive dashboard — delivery / productivity / quality / risk KPIs |
-| `/reports/daily` | Daily Work Movement — created/started/dev-done/QA-done/blocked today |
-| `/reports/developers` | Developer Productivity — output, dev duration, reopened, quality score |
-| `/reports/qa` | QA Productivity — verified, rejection rate, testing duration |
-| `/reports/status-duration` | Status Duration Analysis — average/median time per stage for a chosen timeframe (24h / 7d / month / custom range) + current worst offenders |
-| `/reports/time-in-status` | Per-ticket time in each status for a timeframe (24h / 7d / 30d / custom range). Two modes: **In-window** (only time accrued inside the window — default) and **Lifetime** (total per status). CSV export at `/reports/time-in-status.csv` |
-| `/reports/release?version=...` | Release Readiness — completion %, open bugs, risk score |
-| `/reports/sprints` | Sprint Health — needs `JIRA_BOARD_IDS` configured |
-| `/api/reports.json` | All report data as JSON |
-
-**Developer Reports (18 discipline/productivity reports):**
-
-| URL | What |
-|-----|------|
-| `/dev-reports` | Catalog of all 18 reports, grouped by recommended cadence |
-| `/dev-reports/<slug>` | Any report with the common filters (project, developer, start/end date); CSV at `/dev-reports/<slug>.csv` |
-
-The 18 reports (per the *Jira Developer Reports Definition* spec): Daily Developer Activity, Silent Tickets, Multiple Active Tickets, End-of-Day Discipline, Ready for QA Contribution, Returned from QA, Cycle Time by Developer, Stuck Ticket Aging, Worklog Completeness, Tickets Without Estimate, Overdue Tickets, Developer Handoff Quality, Status Change Without Comment, Blocked Tickets, Sprint Commitment vs Completion, Ticket Movement Timeline, Developer Focus, and Bug Fix Quality. These pull an enriched dataset (comments, worklogs, estimates, story points, labels, sprint field) — extra knobs: `DEV_REPORTS_MAX_LOOKBACK_DAYS` (default 365), `COMMENT_WINDOW_MIN` (default 10), `HANDOFF_TEST_KEYWORDS`, `HANDOFF_PR_KEYWORDS`, `BLOCKED_LABELS`.
-
-> Per-developer detail (Individual Activity) lives on the `/developer/<name>` page above.
+Admin-editable configuration lives in `settings.json` (`APP_CONFIG_PATH`,
+default `./data/settings.json`) — status changes never require a deploy.
+Snapshots in SQLite (`SNAPSHOT_DB_PATH`, default `./data/snapshots.db`).
+See `docs/PRD_Jira_Developer_Reports_v3.md` and `docs/jira_process_setup.md`.
 
 ### Configuration for the executive reports
 

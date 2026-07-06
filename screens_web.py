@@ -988,3 +988,104 @@ def quality_json():
     bugs, loops, trend = _quality_data()
     return jsonify({"bugs": bugs, "trend": trend,
                     "reopen_loops": [{"key": r["issue"].key, "loops": r["loops"]} for r in loops]})
+
+
+# ---------------------------------------------------------------------------
+# Team Trends + Meeting Mode (FR-X1/X2) and the snapshot/digest task endpoint
+# ---------------------------------------------------------------------------
+
+TRENDS_TMPL = """
+{% if meeting %}<style>.wrap{max-width:1350px}.card .n{font-size:44px}.card .l{font-size:15px}h1{font-size:28px}td,th{font-size:16px}</style>{% endif %}
+<h1>Team Trends</h1>
+<div class="sub">Aggregates only — meetings discuss trends, not individuals ·
+  <a class="btn-ghost" href="?{{ 'meeting=0' if meeting else 'meeting=1' }}">{{ 'Exit meeting mode' if meeting else 'Meeting Mode' }}</a>
+  {% if not meeting %} · <a href="/exec/kpis">legacy KPI dashboard</a>{% endif %}
+</div>
+<div class="cards">
+  {% for m in metrics %}
+  <div class="card"><div class="n">{{ m.value }}</div><div class="l">{{ m.label }}
+    {% if m.delta is not none %}<br><span class="pill {{ 'ok' if m.good else 'bad' }}">{{ '+' if m.delta > 0 }}{{ m.delta }} wk/wk</span>{% endif %}</div></div>
+  {% endfor %}
+</div>
+{% if not history %}
+<div class="sectionbox"><p class="muted"><b>No snapshots yet.</b> Trends need history: schedule a daily hit of
+<code>POST /tasks/snapshot</code> (Azure WebJob, Logic App, or cron). Each run stores the day's team
+aggregates in SQLite; week-over-week deltas appear after the first week.</p></div>
+{% else %}
+<h2>History</h2>
+<table>
+<tr><th>Day</th><th>EOD signal %</th><th>Median cycle (h)</th><th>QA return rate</th><th>Blocked</th><th>Attention size</th></tr>
+{% for s in history[:30] %}
+<tr><td>{{ s.day }}</td><td>{{ s.eod_signal_pct }}%</td><td>{{ s.cycle_median_h or '—' }}</td>
+<td>{{ s.return_rate_pct if s.return_rate_pct is not none else '—' }}{{ '%' if s.return_rate_pct is not none }} ({{ s.returns }}/{{ s.handoffs }})</td>
+<td>{{ s.blocked_count }}</td><td>{{ s.attention_size }}</td></tr>
+{% endfor %}
+</table>
+{% endif %}
+{% if meeting %}
+<h2>Distributions <span class="muted">(no names)</span></h2>
+<div class="cards">
+  <div class="card"><div class="n">{{ dist.aging }}</div><div class="l">tickets over their aging threshold</div></div>
+  <div class="card"><div class="n">{{ dist.silent }}</div><div class="l">tickets silent beyond the limit</div></div>
+  <div class="card"><div class="n">{{ dist.multi }}</div><div class="l">developers holding >1 active ticket</div></div>
+</div>
+{% endif %}
+"""
+
+
+@v3.route("/exec")
+def trends_screen():
+    import flow_quality as fq
+    import snapshots as sn
+    meeting = request.args.get("meeting") == "1"
+    issues = _issues(None)
+    agg = sn.compute_aggregates(issues)
+    wow = sn.week_over_week()
+    def metric(key, label, value, invert=False):
+        w = wow.get(key, {})
+        delta = w.get("delta")
+        good = (delta or 0) <= 0 if invert else (delta or 0) >= 0
+        return {"label": label, "value": value, "delta": delta, "good": good}
+    metrics = [
+        metric("eod_signal_pct", "Active tickets with EOD signal",
+               f"{agg['eod_signal_pct']}% of {agg['eod_total']}"),
+        metric("cycle_median_h", "Median cycle time (30d)",
+               f"{agg['cycle_median_h'] or '—'}h (n={agg['cycle_n']})", invert=True),
+        metric("return_rate_pct", "QA return rate (14d)",
+               f"{agg['return_rate_pct'] if agg['return_rate_pct'] is not None else '—'}"
+               f"{'%' if agg['return_rate_pct'] is not None else ''} "
+               f"({agg['returns']} of {agg['handoffs']})", invert=True),
+        metric("blocked_count", "Blocked tickets",
+               f"{agg['blocked_count']}"
+               + (f" · med {agg['blocked_median_days']}d" if agg['blocked_median_days'] else ""),
+               invert=True),
+        metric("disposition_pct", "Disposition compliance",
+               f"{agg['disposition_pct']}%" if agg["disposition_pct"] is not None else "—"),
+        metric("attention_size", "Attention board size", agg["attention_size"], invert=True),
+    ]
+    board = attention.board(issues)
+    dist = {
+        "aging": sum(1 for r in board["rows"] if any(x["kind"] == "aging" for x in r["reasons"])),
+        "silent": sum(1 for r in board["rows"] if any(x["kind"] == "silent" for x in r["reasons"])),
+        "multi": len(fq.multiple_active(issues)),
+    }
+    return page(TRENDS_TMPL, active="/exec", metrics=metrics, history=sn.series(30),
+                meeting=meeting, dist=dist, show_banner=not meeting)
+
+
+@v3.route("/tasks/snapshot", methods=["GET", "POST"])
+def snapshot_task():
+    """Scheduled endpoint (cron/WebJob): stores today's aggregate snapshot; with
+    ?digest=1 also posts the Teams morning digest (FR-U8)."""
+    import digest as dg
+    import snapshots as sn
+    issues = _issues(None)
+    agg = sn.take(issues)
+    sent = False
+    if request.args.get("digest") == "1":
+        board = attention.board(issues)
+        try:
+            sent = dg.send(board["rows"], agg)
+        except Exception:
+            sent = False
+    return jsonify({"ok": True, "snapshot": agg, "digest_sent": sent})

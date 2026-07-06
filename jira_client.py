@@ -299,9 +299,10 @@ def fetch_issues_for_version(version_name: str) -> list[dict]:
 def fetch_active_sprints() -> list[dict]:
     """Active sprints + their issues, for the Sprint Health report. Requires
     JIRA_BOARD_IDS to be configured; returns [] otherwise (report degrades gracefully)."""
-    import config as cfg
+    import settings as _st
     sprints = []
-    for board_id in cfg.BOARD_IDS:
+    board_ids = _st.load().get("board_ids") or []
+    for board_id in board_ids:
         s_url = f"{JIRA_BASE_URL}/rest/agile/1.0/board/{board_id}/sprint?state=active"
         r = requests.get(s_url, auth=_auth(), headers={"Accept": "application/json"},
                          timeout=60)
