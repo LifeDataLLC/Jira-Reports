@@ -245,6 +245,60 @@ def test_investigator_gaps():
     check("investigator teaches without key", "Enter an issue key" in h2)
 
 
+# ---------------------------------------------------------------------------
+# Phase 3 — percentiles + flow/quality engines
+# ---------------------------------------------------------------------------
+
+def test_percentile():
+    check("percentile empty", A.percentile([], 50) is None)
+    check("median odd", A.percentile([1, 2, 100], 50) == 2)
+    check("median robust to outlier", A.percentile([1, 2, 3, 4, 100], 50) == 3)
+    check("p85 interpolates", abs(A.percentile([0, 10], 85) - 8.5) < 1e-9)
+
+
+def test_flow_quality():
+    import dev_reports as dr
+    import flow_quality as fq
+    done = mkraw("FL-1", "Done", "Done", typ="Bug", events=[
+        (10, "Jane Doe", "status", "To Do", "Development / In Design"),
+        (7, "Jane Doe", "status", "Development / In Design", "Ready for QA (QA Env)"),
+        (6, "QA Bob", "status", "Ready for QA (QA Env)", "Reopen"),
+        (4, "Jane Doe", "status", "Reopen", "Ready for QA (QA Env)"),
+        (2, "QA Bob", "status", "Ready for QA (QA Env)", "Done")])
+    done["fields"]["resolutiondate"] = iso(now - dt.timedelta(days=2))
+    wip1 = mkraw("FL-2", "Development / In Design", "In Progress", assignee="Sam Lee", events=[
+        (3, "Sam Lee", "status", "To Do", "Development / In Design")])
+    wip2 = mkraw("FL-3", "Development / In Design", "In Progress", assignee="Sam Lee", events=[
+        (1, "Sam Lee", "status", "To Do", "Development / In Design")])
+    issues = dr.load_dev_issues([done, wip1, wip2])
+
+    rows = fq.cycle_rows(issues, match=dr._dev_match)
+    fl1 = [r for r in rows if r["issue"].key == "FL-1"][0]
+    check("dev->qa hours", abs(fl1["dev_to_qa_h"] - 72.0) < 1)
+    check("cycle hours", abs(fl1["cycle_h"] - 192.0) < 1)
+    check("rework loop counted", fl1["rework_loops"] >= 1)
+    check("stage segments computed", len(fl1["segments"]) >= 2)
+    stats = fq.cycle_stats(rows)
+    check("stats counts", stats["cycle"]["n"] == 1 and stats["dev_to_qa"]["n"] == 1)
+
+    v = fq.multiple_active(issues)
+    check("multiple-active violation", len(v) == 1 and v[0]["developer"] == "Sam Lee"
+          and v[0]["count"] == 2)
+
+    bugs = fq.bug_lens(issues, match=dr._dev_match)
+    jane = [b for b in bugs if b["developer"] == "Jane Doe"][0]
+    check("bug lens median hours", jane["median_hours"] is not None and jane["done"] == 1)
+    check("bug lens raw counts", "(1 of 1)" in jane["rate_label"])
+
+    tr = fq.return_trend(issues)
+    check("return trend has data", sum(w["handoffs"] for w in tr) == 2
+          and sum(w["returns"] for w in tr) == 1)
+
+    b = fq.bottleneck(issues)
+    check("bottleneck sorted desc", all(b[i]["median_days"] >= b[i+1]["median_days"]
+                                        for i in range(len(b)-1)))
+
+
 def test_routes():
     import app
     import jira_client as jc

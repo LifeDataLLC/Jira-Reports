@@ -41,3 +41,16 @@
   comments, worklogs, field changes) with inactivity-gap spacers (configurable),
   bucket stage-duration ribbon, Jira deep link, optional date range; falls back
   to a live uncached single-issue fetch when the key is outside the sync window.
+
+### Phase 3 — Flow Analytics + Quality + explain-this-number
+- `analytics.percentile`; all new duration displays are median/p85 with raw
+  counts (PRD §3.5) — averages never shown alone.
+- `flow_quality.py` + `/flow`: cycle stats (median/p85 dev→QA and cycle),
+  per-ticket stage-share stacked bars (bucket-colored, CSS only), team
+  bottleneck medians per status, multiple-active rule (active_dev only,
+  qa_stage excluded), Focus view. CSV + `/api/v2/flow.*`.
+- `/quality`: bug lens per developer (median resolution hours, return rate with
+  raw counts), reopen-loop (≥2 rework cycles) highlighting, weekly team
+  return-rate trend. CSV + `/api/v2/quality.*`.
+- `metrics_glossary.py`: single definitions dict rendered as hover tooltips
+  (FR-U5) so UI and docs cannot drift.

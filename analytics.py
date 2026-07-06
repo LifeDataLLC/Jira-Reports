@@ -41,6 +41,19 @@ def days(a, b):
     return round((b - a).total_seconds() / 86400, 2)
 
 
+def percentile(vals, p):
+    """p-th percentile (0-100) by linear interpolation; None on empty input.
+    PRD §3.5: durations display median/p85, never averages alone."""
+    vals = sorted(v for v in vals if v is not None)
+    if not vals:
+        return None
+    if len(vals) == 1:
+        return vals[0]
+    k = (len(vals) - 1) * (p / 100)
+    lo, hi = int(k), min(int(k) + 1, len(vals) - 1)
+    return vals[lo] + (vals[hi] - vals[lo]) * (k - lo)
+
+
 def now_utc():
     return dt.datetime.now(dt.timezone.utc)
 

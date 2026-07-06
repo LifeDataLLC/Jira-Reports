@@ -526,21 +526,6 @@ SHELL_TMPL = """
 """
 
 
-@v3.route("/flow")
-def flow_shell():
-    return page(SHELL_TMPL, active="/flow", title="Flow Analytics",
-                sub="Cycle time, stage breakdown, bottlenecks, focus",
-                teach="Full Flow Analytics arrives in Phase 3. Time in Status is available now:",
-                links='<a class="btn" href="/reports/time-in-status">Time in Status →</a>')
-
-
-@v3.route("/quality")
-def quality_shell():
-    return page(SHELL_TMPL, active="/quality", title="Quality",
-                sub="Bug fix quality, reopen loops, return-rate trends",
-                teach="This screen arrives in Phase 3 of the v3 rollout.", links="")
-
-
 @v3.route("/planning")
 def planning_shell():
     return page(SHELL_TMPL, active="/planning", title="Sprint & Planning",
@@ -747,3 +732,183 @@ def investigate_screen():
               for b, secs in sorted(per_bucket.items(), key=lambda kv: -kv[1]) if secs > 0]
     return page(INVEST_TMPL, active="/investigate", issue=issue, err=None,
                 timeline=timeline, ribbon=ribbon)
+
+
+# ---------------------------------------------------------------------------
+# Screen 4 — Flow Analytics (FR-F1..F6)
+# ---------------------------------------------------------------------------
+
+FLOW_TMPL = """
+<h1>Flow Analytics</h1>
+<div class="sub">Cycle time, stage breakdown, bottlenecks, focus · medians and p85, never bare averages · <a href="/reports/time-in-status">Time in Status →</a></div>
+""" + FILTER_BAR + """
+<div class="cards">
+  <div class="card"><div class="n">{{ hfmt(stats.dev_to_qa.median) }}</div><div class="l">{{ g('dev_to_qa','Dev → QA')|safe }} median (n={{ stats.dev_to_qa.n }})</div></div>
+  <div class="card"><div class="n">{{ hfmt(stats.dev_to_qa.p85) }}</div><div class="l">{{ g('p85','Dev → QA p85')|safe }}</div></div>
+  <div class="card"><div class="n">{{ hfmt(stats.cycle.median) }}</div><div class="l">{{ g('cycle_time','Cycle time')|safe }} median (n={{ stats.cycle.n }})</div></div>
+  <div class="card"><div class="n">{{ hfmt(stats.cycle.p85) }}</div><div class="l">{{ g('p85','Cycle p85')|safe }}</div></div>
+</div>
+
+<h2>{{ g('multiple_active','Multiple active tickets')|safe }} <span class="muted">(rule: one active ticket; QA-stage excluded)</span></h2>
+<table>
+<tr><th>Developer</th><th>Active count</th><th>Tickets</th></tr>
+{% for v in violations %}
+<tr><td>{{ v.developer }}</td><td><span class="pill bad">{{ v.count }}</span></td>
+<td>{% for t in v.tickets %}<a href="{{ t.url }}" target="_blank">{{ t.key }}</a> <span class="muted">({{ t.status }})</span>{{ ', ' if not loop.last }}{% endfor %}</td></tr>
+{% else %}<tr><td colspan="3" class="muted">No one holds more than one active-dev ticket. 🎉</td></tr>{% endfor %}
+</table>
+
+<h2>{{ g('bottleneck','Team bottleneck')|safe }} <span class="muted">(median days per status)</span></h2>
+<table>
+<tr><th>Status</th><th>Bucket</th><th>Median days</th><th>p85 days</th><th>Tickets</th><th></th></tr>
+{% for b in bneck[:12] %}
+<tr><td>{{ b.status }}</td><td><span class="pill">{{ b.bucket }}</span></td>
+<td>{{ b.median_days }}</td><td>{{ b.p85_days }}</td><td>{{ b.n }}</td>
+<td><div style="background:#dfe7f5;border-radius:4px;height:10px;width:100%;max-width:220px"><div style="background:#0052cc;border-radius:4px;height:10px;width:{{ (100 * b.median_days / bneck[0].median_days)|round|int if bneck else 0 }}%"></div></div></td></tr>
+{% else %}<tr><td colspan="6" class="muted">No stage data.</td></tr>{% endfor %}
+</table>
+
+<h2>Per-ticket stage breakdown <span class="muted">(active + recently completed)</span> · <a href="/api/v2/flow.csv?{{ request.query_string.decode() }}" download>CSV</a></h2>
+<table>
+<tr><th>Issue</th><th>Summary</th><th>Developer</th><th>{{ g('dev_to_qa','Dev → QA h')|safe }}</th><th>{{ g('cycle_time','Cycle h')|safe }}</th><th>{{ g('reopen_loop','Rework loops')|safe }}</th><th style="min-width:240px">Stage share</th></tr>
+{% for r in rows[:80] %}
+<tr><td><a href="{{ r.issue.url }}" target="_blank">{{ r.issue.key }}</a></td>
+<td>{{ r.issue.summary[:60] }}</td><td>{{ r.issue.assignee }}</td>
+<td>{{ r.dev_to_qa_h if r.dev_to_qa_h is not none else '—' }}</td>
+<td>{{ r.cycle_h if r.cycle_h is not none else '—' }}</td>
+<td>{% if r.rework_loops >= 2 %}<span class="pill bad">{{ r.rework_loops }}</span>{% elif r.rework_loops %}<span class="pill warn">{{ r.rework_loops }}</span>{% else %}0{% endif %}</td>
+<td><div style="display:flex;height:16px;border-radius:4px;overflow:hidden">
+  {% for s in r.segments %}<div title="{{ s.bucket }}: {{ s.days }}d ({{ s.pct }}%)" style="width:{{ s.pct }}%;background:{{ bucket_colors.get(s.bucket,'#c1c7d0') }}"></div>{% endfor %}
+</div></td></tr>
+{% else %}<tr><td colspan="7" class="muted">No tickets entered development in the window.</td></tr>{% endfor %}
+</table>
+<div class="muted">{% for b, c in bucket_colors.items() %}{% if b %}<span style="margin-right:12px"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:{{ c }};margin-right:3px"></span>{{ bucket_labels.get(b,b) }}</span>{% endif %}{% endfor %}</div>
+
+<h2>{{ g('focus','Developer focus')|safe }} <span class="muted">(distinct tickets touched per day)</span></h2>
+<table>
+<tr><th>Date</th><th>Developer</th><th>Distinct tickets</th><th>Total activities</th><th>Status changes</th><th>Comments</th><th>Worklogs</th></tr>
+{% for f in focus[:60] %}
+<tr><td>{{ f[0] }}</td><td>{{ f[1] }}</td>
+<td>{% if f[2] > 3 %}<span class="pill warn">{{ f[2] }}</span>{% else %}{{ f[2] }}{% endif %}</td>
+<td>{{ f[3] }}</td><td>{{ f[4] }}</td><td>{{ f[5] }}</td><td>{{ f[6] }}</td></tr>
+{% else %}<tr><td colspan="7" class="muted">No activity in the window.</td></tr>{% endfor %}
+</table>
+"""
+
+
+def _hfmt(hours):
+    if hours is None:
+        return "—"
+    return f"{hours/24:.1f}d" if hours >= 48 else f"{hours:.0f}h"
+
+
+def _flow_data():
+    import flow_quality as fq
+    project, developer, start, end = parse_filters()
+    if not start and not end:
+        start = A.now_utc() - dt.timedelta(days=30)
+    issues = _issues(project)
+    rows = fq.cycle_rows(issues, developer, start, end, dr._dev_match)
+    focus = dr.developer_focus(issues, developer=developer, start=start, end=end)["rows"]
+    return (rows, fq.cycle_stats(rows), fq.bottleneck(issues),
+            fq.multiple_active(issues, developer, dr._dev_match), focus)
+
+
+@v3.route("/flow")
+def flow_screen():
+    from metrics_glossary import gloss
+    rows, stats, bneck, violations, focus = _flow_data()
+    return page(FLOW_TMPL, active="/flow", rows=rows, stats=stats, bneck=bneck,
+                violations=violations, focus=focus, hfmt=_hfmt, g=gloss,
+                bucket_colors=BUCKET_COLORS, bucket_labels=st.BUCKET_LABELS)
+
+
+@v3.route("/api/v2/flow.csv")
+def flow_csv():
+    rows, _s, _b, _v, _f = _flow_data()
+    out = [[r["issue"].key, r["issue"].summary, r["issue"].assignee,
+            r["dev_to_qa_h"], r["cycle_h"], r["rework_loops"],
+            "; ".join(f"{s['bucket']}={s['days']}d" for s in r["segments"])] for r in rows]
+    return csv_response(["Issue", "Summary", "Developer", "Dev to QA hours",
+                         "Cycle hours", "Rework loops", "Stage breakdown"], out, "flow.csv")
+
+
+@v3.route("/api/v2/flow.json")
+def flow_json():
+    rows, stats, bneck, violations, _f = _flow_data()
+    return jsonify({"stats": stats, "bottleneck": bneck,
+                    "violations": [{"developer": v["developer"], "count": v["count"],
+                                    "tickets": [t.key for t in v["tickets"]]} for v in violations],
+                    "tickets": [{"key": r["issue"].key, "dev_to_qa_h": r["dev_to_qa_h"],
+                                 "cycle_h": r["cycle_h"], "rework_loops": r["rework_loops"]}
+                                for r in rows]})
+
+
+# ---------------------------------------------------------------------------
+# Screen 5 — Quality (FR-QL1..QL3)
+# ---------------------------------------------------------------------------
+
+QUALITY_TMPL = """
+<h1>Quality</h1>
+<div class="sub">Bug lens, reopen loops, team return-rate trend · coaching data, not a scoreboard</div>
+""" + FILTER_BAR + """
+<h2>{{ g('return_rate','Bug fix quality by developer')|safe }} · <a href="/api/v2/quality.csv?{{ request.query_string.decode() }}" download>CSV</a></h2>
+<table>
+<tr><th>Developer</th><th>Bugs</th><th>Completed</th><th>{{ g('return','Returned from QA')|safe }}</th><th>{{ g('median','Median resolution')|safe }}</th><th>{{ g('return_rate','Return rate')|safe }}</th></tr>
+{% for r in bugs %}
+<tr><td>{{ r.developer }}</td><td>{{ r.count }}</td><td>{{ r.done }}</td><td>{{ r.returned }}</td>
+<td>{{ hfmt(r.median_hours) }}</td><td>{{ r.rate_label }}</td></tr>
+{% else %}<tr><td colspan="6" class="muted">No bugs in the window.</td></tr>{% endfor %}
+</table>
+
+<h2>{{ g('reopen_loop','Reopen loops')|safe }} <span class="muted">(2+ rework cycles)</span></h2>
+<table>
+<tr><th>Issue</th><th>Summary</th><th>Developer</th><th>Status</th><th>Loops</th></tr>
+{% for r in loops %}
+<tr><td><a href="{{ r.issue.url }}" target="_blank">{{ r.issue.key }}</a></td>
+<td>{{ r.issue.summary }}</td><td>{{ r.issue.assignee }}</td><td>{{ r.issue.status }}</td>
+<td><span class="pill bad">{{ r.loops }}×</span></td></tr>
+{% else %}<tr><td colspan="5" class="muted">No reopen loops. 🎉</td></tr>{% endfor %}
+</table>
+
+<h2>Team return-rate trend <span class="muted">(weekly, raw counts shown)</span></h2>
+<table>
+<tr><th>Week</th><th>Handoffs</th><th>Returns</th><th>Return rate</th><th></th></tr>
+{% for w in trend %}
+<tr><td>{{ w.week }}</td><td>{{ w.handoffs }}</td><td>{{ w.returns }}</td><td>{{ w.rate_label }}</td>
+<td><div style="background:#dfe7f5;border-radius:4px;height:10px;width:100%;max-width:200px"><div style="background:{{ '#de350b' if (w.rate_pct or 0) >= 50 else '#0052cc' }};border-radius:4px;height:10px;width:{{ w.rate_pct or 0 }}%"></div></div></td></tr>
+{% else %}<tr><td colspan="5" class="muted">No handoffs recorded in the trend window.</td></tr>{% endfor %}
+</table>
+"""
+
+
+def _quality_data():
+    import flow_quality as fq
+    project, developer, start, end = parse_filters()
+    issues = _issues(project)
+    return (fq.bug_lens(issues, developer, start, end, dr._dev_match),
+            fq.reopen_loops(issues), fq.return_trend(issues))
+
+
+@v3.route("/quality")
+def quality_screen():
+    from metrics_glossary import gloss
+    bugs, loops, trend = _quality_data()
+    return page(QUALITY_TMPL, active="/quality", bugs=bugs, loops=loops, trend=trend,
+                hfmt=_hfmt, g=gloss)
+
+
+@v3.route("/api/v2/quality.csv")
+def quality_csv():
+    bugs, _l, _t = _quality_data()
+    rows = [[b["developer"], b["count"], b["done"], b["returned"],
+             b["median_hours"], b["rate_label"]] for b in bugs]
+    return csv_response(["Developer", "Bugs", "Completed", "Returned",
+                         "Median resolution hours", "Return rate"], rows, "quality.csv")
+
+
+@v3.route("/api/v2/quality.json")
+def quality_json():
+    bugs, loops, trend = _quality_data()
+    return jsonify({"bugs": bugs, "trend": trend,
+                    "reopen_loops": [{"key": r["issue"].key, "loops": r["loops"]} for r in loops]})
