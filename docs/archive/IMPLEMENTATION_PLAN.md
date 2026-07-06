@@ -1,3 +1,5 @@
+> **DEPRECATED** — superseded by [IMPLEMENTATION_INSTRUCTIONS_v3.md](../IMPLEMENTATION_INSTRUCTIONS_v3.md). Kept for historical reference.
+
 # Implementation Plan — Developer Activity Report (Local Hosting)
 
 Companion to `PRD.md`. Sequences the work into phases, all **locally hosted** (runs on

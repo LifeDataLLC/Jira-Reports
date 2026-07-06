@@ -74,6 +74,8 @@ class DevIssue:
     assignee_events: list                  # [(ts, author, from, to)]
     comments: list                         # [{"ts","author","author_id","text"}]
     worklogs: list                         # [{"ts","author","author_id","seconds","note"}]
+    field_events: list = field(default_factory=list)  # [(ts, author, kind, from, to)]
+    start_date: dt.date | None = None
     timeline: A.Timeline = None
 
     @property
@@ -113,15 +115,22 @@ def _parse_sprints(val) -> list:
     return out
 
 
+# Changelog field name (lowercased) -> unified field-event kind (FR-D3).
+_FIELD_KINDS = {"duedate": "duedate", "due date": "duedate",
+                "start date": "startdate", "planned start": "startdate",
+                "flagged": "flag", "sprint": "sprint"}
+
+
 def load_dev_issues(raw_list, custom_fields=None) -> list[DevIssue]:
     cf = custom_fields or {}
+    start_field = cf.get("start_date") or ""
     issues = []
     for raw in raw_list:
         f = raw.get("fields", {})
         status = f.get("status", {}) or {}
         cat = (status.get("statusCategory", {}) or {}).get("name", "")
         hist = raw.get("changelog", {}).get("histories", [])
-        status_events, assignee_events = [], []
+        status_events, assignee_events, field_events = [], [], []
         for h in hist:
             ts = A.parse_ts(h.get("created"))
             if not ts:
@@ -129,14 +138,20 @@ def load_dev_issues(raw_list, custom_fields=None) -> list[DevIssue]:
             author = (h.get("author") or {}).get("displayName", "Unknown")
             author_id = (h.get("author") or {}).get("accountId", "")
             for item in h.get("items", []):
-                if item.get("field") == "status":
+                fname = (item.get("field") or "").lower()
+                if fname == "status":
                     status_events.append((ts, author, author_id,
                                           item.get("fromString") or "", item.get("toString") or ""))
-                elif item.get("field") == "assignee":
+                elif fname == "assignee":
                     assignee_events.append((ts, author,
                                             item.get("fromString") or "", item.get("toString") or ""))
+                elif fname in _FIELD_KINDS or (start_field and item.get("fieldId") == start_field):
+                    kind = _FIELD_KINDS.get(fname, "startdate")
+                    field_events.append((ts, author, kind,
+                                         item.get("fromString") or "", item.get("toString") or ""))
         status_events.sort(key=lambda e: e[0])
         assignee_events.sort(key=lambda e: e[0])
+        field_events.sort(key=lambda e: e[0])
         comments = [{"ts": A.parse_ts(c.get("created")),
                      "author": (c.get("author") or {}).get("displayName", "Unknown"),
                      "author_id": (c.get("author") or {}).get("accountId", ""),
@@ -153,6 +168,13 @@ def load_dev_issues(raw_list, custom_fields=None) -> list[DevIssue]:
         if f.get("duedate"):
             try:
                 due = dt.date.fromisoformat(f["duedate"][:10])
+            except ValueError:
+                pass
+        sdate = None
+        raw_sdate = f.get(start_field) if start_field else None
+        if isinstance(raw_sdate, str):
+            try:
+                sdate = dt.date.fromisoformat(raw_sdate[:10])
             except ValueError:
                 pass
         issues.append(DevIssue(
@@ -176,6 +198,8 @@ def load_dev_issues(raw_list, custom_fields=None) -> list[DevIssue]:
             assignee_events=assignee_events,
             comments=[c for c in comments if c["ts"]],
             worklogs=[w for w in worklogs if w["ts"]],
+            field_events=field_events,
+            start_date=sdate,
             timeline=A.analyze(hist, f.get("created"), f.get("resolutiondate"),
                                status.get("name", ""), cat),
         ))

@@ -1,3 +1,5 @@
+> **DEPRECATED** — superseded by [PRD_Jira_Developer_Reports_v3.md](../PRD_Jira_Developer_Reports_v3.md). Kept for historical reference.
+
 # Product Requirements Document — Developer Activity Report (Jira)
 
 **Status:** Draft v2

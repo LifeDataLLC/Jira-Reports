@@ -171,8 +171,15 @@ DEV_LOOKBACK_DAYS = int(os.environ.get("DEV_REPORTS_MAX_LOOKBACK_DAYS", "365"))
 
 @_cached
 def detect_custom_fields() -> dict:
-    """Find the instance's Story Points and Sprint custom field ids by name."""
-    out = {"story_points": os.environ.get("STORY_POINT_FIELD") or None, "sprint": None}
+    """Find the instance's Story Points, Sprint, and Start date field ids by name.
+    The resolved start-date id is persisted to settings (admin-overridable there)."""
+    out = {"story_points": os.environ.get("STORY_POINT_FIELD") or None,
+           "sprint": None, "start_date": None}
+    try:
+        import settings as st
+        out["start_date"] = st.load().get("start_date_field") or None
+    except Exception:
+        st = None
     try:
         resp = requests.get(f"{JIRA_BASE_URL}/rest/api/3/field", auth=_auth(),
                             headers={"Accept": "application/json"}, timeout=60)
@@ -183,8 +190,18 @@ def detect_custom_fields() -> dict:
                     out["story_points"] = f.get("id")
                 if not out["sprint"] and name == "sprint":
                     out["sprint"] = f.get("id")
+                if not out["start_date"] and name in ("start date", "planned start"):
+                    out["start_date"] = f.get("id")
     except requests.RequestException:
         pass
+    if st and out["start_date"]:
+        try:
+            s = st.load()
+            if s.get("start_date_field") != out["start_date"]:
+                s["start_date_field"] = out["start_date"]
+                st.save(s)
+        except Exception:
+            pass
     return out
 
 
@@ -220,7 +237,7 @@ def fetch_dev_dataset(project: str | None = None, lookback_days: int | None = No
     fields = ["summary", "status", "assignee", "reporter", "issuetype", "priority",
               "created", "updated", "resolutiondate", "duedate", "labels",
               "timeoriginalestimate", "comment", "worklog"]
-    fields += [v for v in (cf["story_points"], cf["sprint"]) if v]
+    fields += [v for v in (cf["story_points"], cf["sprint"], cf.get("start_date")) if v]
     jql = (f'project in ({projects}) AND ('
            f'statusCategory != Done OR updated >= -{lookback}d) ORDER BY updated DESC')
     issues = search_issues(jql, fields, expand_changelog=True)
@@ -236,6 +253,27 @@ def fetch_dev_dataset(project: str | None = None, lookback_days: int | None = No
             f["worklog"] = {"worklogs": _fetch_all_pages(
                 f"{JIRA_BASE_URL}/rest/api/3/issue/{raw['key']}/worklog", "worklogs")}
     return issues
+
+
+def fetch_single_issue(key: str) -> dict | None:
+    """Uncached full fetch of one issue (fields + complete changelog + comments +
+    worklogs) for the Ticket Investigator — always fresh, whole history."""
+    url = f"{JIRA_BASE_URL}/rest/api/3/issue/{key}"
+    r = requests.get(url, params={"expand": "changelog"}, auth=_auth(),
+                     headers={"Accept": "application/json"}, timeout=60)
+    if not r.ok:
+        return None
+    raw = r.json()
+    f = raw.setdefault("fields", {})
+    raw.setdefault("changelog", {})
+    cl = raw["changelog"]
+    if cl.get("total", 0) > len(cl.get("histories", [])):
+        cl["histories"] = get_changelog(key)
+    f["comment"] = {"comments": _fetch_all_pages(
+        f"{JIRA_BASE_URL}/rest/api/3/issue/{key}/comment", "comments")}
+    f["worklog"] = {"worklogs": _fetch_all_pages(
+        f"{JIRA_BASE_URL}/rest/api/3/issue/{key}/worklog", "worklogs")}
+    return raw
 
 
 @_cached

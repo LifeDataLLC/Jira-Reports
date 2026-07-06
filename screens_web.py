@@ -14,11 +14,20 @@ import datetime as dt
 
 from flask import Blueprint, Response, jsonify, redirect, render_template_string, request
 
+import activity
+import analytics as A
+import attention
+import checklist
 import config as legacy
+import dev_reports as dr
 import jira_client as jc
 import settings as st
 
 v3 = Blueprint("v3", __name__)
+
+
+def _issues(project=None):
+    return dr.load_dev_issues(jc.fetch_dev_dataset(project), jc.detect_custom_fields())
 
 
 # ---------------------------------------------------------------------------
@@ -320,3 +329,236 @@ def settings_screen():
                 thresholds=s["status_thresholds"], buckets=st.BUCKETS,
                 bucket_labels=st.BUCKET_LABELS, bucket_default=bucket_default,
                 gate_labels=GATE_LABELS, check_labels=CHECK_LABELS)
+
+
+# ---------------------------------------------------------------------------
+# Screen 1 — My Day (FR-M1/M2/M4/M5)
+# ---------------------------------------------------------------------------
+
+MYDAY_TMPL = """
+<h1>My Day</h1>
+<div class="sub">Per-ticket end-of-day checklist — fix the red items before ending the day · <a href="/my-day/rollup?{{ request.query_string.decode() }}">admin roll-up</a> · <a href="/my-day/feed?{{ request.query_string.decode() }}">activity feed</a></div>
+""" + FILTER_BAR.replace("{{ extra_filters|default('')|safe }}",
+  """<label>Day<input type="date" name="day" value="{{ request.args.get('day','') }}"></label>""") + """
+{% if not request.args.get('developer') %}
+<div class="sectionbox"><b>Pick your name</b> to see your checklist:
+  {% for dev in developers %}<a class="pill" style="margin:3px" href="?developer={{ dev|urlencode }}{{ day_qs }}">{{ dev }}</a>{% endfor %}
+  {% if not developers %}<span class="muted">No active tickets found.</span>{% endif %}
+</div>
+{% endif %}
+{% if d %}
+<div class="cards">
+  <div class="card"><div class="n">{{ d.rows|length }}</div><div class="l">Tickets to review</div></div>
+  <div class="card"><div class="n" style="color:{{ '#bf2600' if d.total_fails else '#006644' }}">{{ d.total_fails }}</div><div class="l">Open items</div></div>
+</div>
+{% for r in d.rows %}
+<div class="sectionbox" style="padding:12px 16px">
+  <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">
+    <div><a href="{{ r.issue.url }}" target="_blank"><b>{{ r.issue.key }}</b></a> {{ r.issue.summary }}</div>
+    <div><span class="pill">{{ r.issue.type }}</span> <span class="pill">{{ r.issue.status }}</span></div>
+  </div>
+  <div style="margin-top:8px">
+  {% for cid, label, state, why in r.checks %}
+    <span class="checkrow c-{{ state }}" title="{{ why }}">{{ '✓' if state=='pass' else ('✗' if state=='fail' else '—') }} {{ label }}</span>
+  {% endfor %}
+  </div>
+</div>
+{% else %}<p class="muted">Nothing on the checklist — no active tickets for this developer.</p>{% endfor %}
+{% endif %}
+"""
+
+
+@v3.route("/my-day")
+def my_day_screen():
+    project, developer, _s, _e = parse_filters()
+    day = _day_arg()
+    issues = _issues(project)
+    devs = sorted({i.assignee for i in issues
+                   if st.bucket_of(i.status, i.category) in ("active_dev", "rework")
+                   and i.assignee != "Unassigned"})
+    d = checklist.my_day(issues, developer, day, dr._dev_match) if developer else None
+    day_qs = f"&day={request.args.get('day')}" if request.args.get("day") else ""
+    return page(MYDAY_TMPL, active="/my-day", d=d, developers=devs, day_qs=day_qs)
+
+
+def _day_arg():
+    try:
+        return dt.date.fromisoformat(request.args.get("day", ""))
+    except ValueError:
+        return dt.datetime.now(dt.timezone.utc).date()
+
+
+ROLLUP_TMPL = """
+<h1>End-of-day roll-up</h1>
+<div class="sub">% of active tickets with an EOD signal (comment, worklog, or any update) on {{ d.day }} · <a href="/my-day">back to My Day</a></div>
+""" + FILTER_BAR.replace("{{ extra_filters|default('')|safe }}",
+  """<label>Day<input type="date" name="day" value="{{ request.args.get('day','') }}"></label>""") + """
+<div class="cards">
+  <div class="card"><div class="n">{{ d.pct }}%</div><div class="l">Tickets with EOD signal ({{ d.signaled }}/{{ d.total }})</div></div>
+</div>
+<table>
+<tr><th>Developer</th><th>Active tickets</th><th>With EOD signal</th><th>%</th></tr>
+{% for r in d.rows %}
+<tr><td>{{ r.developer }}</td><td>{{ r.tickets }}</td><td>{{ r.signaled }}</td>
+<td><span class="pill {{ 'ok' if r.pct >= 80 else ('warn' if r.pct >= 50 else 'bad') }}">{{ r.pct }}%</span></td></tr>
+{% else %}<tr><td colspan="4" class="muted">No active tickets.</td></tr>{% endfor %}
+</table>
+"""
+
+
+@v3.route("/my-day/rollup")
+def my_day_rollup():
+    project, _dev, _s, _e = parse_filters()
+    day = _day_arg()
+    d = checklist.rollup(_issues(project), day)
+    return page(ROLLUP_TMPL, active="/my-day", d=d)
+
+
+FEED_TMPL = """
+<h1>Activity feed</h1>
+<div class="sub">Unified event stream: transitions, comments, worklogs, field changes (FR-M5) · <a href="/my-day">back to My Day</a></div>
+""" + FILTER_BAR + """
+<p class="muted">{{ feed|length }} event(s). <a href="/api/v2/feed.csv?{{ request.query_string.decode() }}" download>Download CSV</a></p>
+<table>
+<tr><th>When</th><th>Type</th><th>Actor</th><th>Issue</th><th>Summary</th><th>Detail</th></tr>
+{% for e in feed[:500] %}
+<tr><td>{{ e.ts.strftime('%Y-%m-%d %H:%M') }}</td><td><span class="pill">{{ e.kind }}</span></td>
+<td>{{ e.actor }}</td><td><a href="{{ e.issue.url }}" target="_blank">{{ e.issue.key }}</a></td>
+<td>{{ e.issue.summary }}</td>
+<td>{% if e.kind=='comment' %}{{ e.detail[:120] }}{% elif e.kind=='worklog' %}{{ (e.seconds/3600)|round(1) }}h {{ e.detail[:80] }}{% else %}{{ e.frm }} → {{ e.to }}{% endif %}</td></tr>
+{% else %}<tr><td colspan="6" class="muted">No events for the selected filters.</td></tr>{% endfor %}
+</table>
+"""
+
+
+def _feed_rows():
+    project, developer, start, end = parse_filters()
+    if not start and not end:
+        start = A.now_utc() - dt.timedelta(days=7)  # default window keeps it fast
+    return activity.build_feed(_issues(project), developer, start, end, dr._dev_match)
+
+
+@v3.route("/my-day/feed")
+def my_day_feed():
+    return page(FEED_TMPL, active="/my-day", feed=_feed_rows())
+
+
+@v3.route("/api/v2/feed.csv")
+def feed_csv():
+    rows = [[e.ts.strftime("%Y-%m-%d %H:%M"), e.kind, e.actor, e.issue.key,
+             e.issue.summary, e.detail or f"{e.frm} → {e.to}"] for e in _feed_rows()]
+    return csv_response(["When", "Type", "Actor", "Issue", "Summary", "Detail"], rows, "activity_feed.csv")
+
+
+@v3.route("/api/v2/myday.json")
+def myday_json():
+    project, developer, _s, _e = parse_filters()
+    d = checklist.my_day(_issues(project), developer, _day_arg(), dr._dev_match)
+    return jsonify({"day": d["day"].isoformat(), "total_fails": d["total_fails"],
+                    "rows": [{"key": r["issue"].key, "fails": r["fails"],
+                              "checks": [{"id": c, "label": l, "state": s, "why": w}
+                                         for c, l, s, w in r["checks"]]} for r in d["rows"]]})
+
+
+# ---------------------------------------------------------------------------
+# Screen 2 — Attention Board (FR-A1/A2)
+# ---------------------------------------------------------------------------
+
+ATTN_TMPL = """
+<h1>Attention Board</h1>
+<div class="sub">Every ticket needing intervention, worst first — reason chips stack per ticket</div>
+""" + FILTER_BAR.replace("{{ extra_filters|default('')|safe }}",
+  """<label>Reason<select name="reason"><option value="">all</option>
+  {% for k in d.kinds %}<option value="{{ k }}" {% if request.args.get('reason')==k %}selected{% endif %}>{{ k }}</option>{% endfor %}
+  </select></label>""") + """
+<p class="muted">{{ d.rows|length }} ticket(s) need attention. <a href="/api/v2/attention.csv?{{ request.query_string.decode() }}" download>Download CSV</a></p>
+<table>
+<tr><th>Issue</th><th>Summary</th><th>Developer</th><th>Status</th><th>Reasons</th></tr>
+{% for r in d.rows %}
+<tr>
+ <td><a href="{{ r.issue.url }}" target="_blank">{{ r.issue.key }}</a></td>
+ <td>{{ r.issue.summary }}</td><td>{{ r.issue.assignee }}</td><td>{{ r.issue.status }}</td>
+ <td>{% for reason in r.reasons %}<span class="chip {{ 'bad' if reason.kind in ('silent','aging','overdue','disposition') else 'warn' }}">⚠ {{ reason.tag }}</span>{% endfor %}</td>
+</tr>
+{% else %}<tr><td colspan="5" class="muted">Nothing needs attention. 🎉</td></tr>{% endfor %}
+</table>
+"""
+
+
+def _attention_board():
+    project, developer, _s, _e = parse_filters()
+    reason = (request.args.get("reason") or "").strip() or None
+    return attention.board(_issues(project), developer, reason, dr._dev_match)
+
+
+@v3.route("/attention")
+def attention_screen():
+    return page(ATTN_TMPL, active="/attention", d=_attention_board())
+
+
+@v3.route("/api/v2/attention.csv")
+def attention_csv():
+    d = _attention_board()
+    rows = [[r["issue"].key, r["issue"].summary, r["issue"].assignee, r["issue"].status,
+             "; ".join(x["tag"] for x in r["reasons"]), round(r["severity"], 1)]
+            for r in d["rows"]]
+    return csv_response(["Issue", "Summary", "Developer", "Status", "Reasons", "Severity"],
+                        rows, "attention_board.csv")
+
+
+@v3.route("/api/v2/attention.json")
+def attention_json():
+    d = _attention_board()
+    return jsonify([{"key": r["issue"].key, "summary": r["issue"].summary,
+                     "developer": r["issue"].assignee, "status": r["issue"].status,
+                     "reasons": [x["tag"] for x in r["reasons"]],
+                     "severity": round(r["severity"], 2)} for r in d["rows"]])
+
+
+# ---------------------------------------------------------------------------
+# Placeholder shells (filled in Phases 2–4) — teaching empty states, not 404s
+# ---------------------------------------------------------------------------
+
+SHELL_TMPL = """
+<h1>{{ title }}</h1>
+<div class="sub">{{ sub }}</div>
+<div class="sectionbox"><p class="muted">{{ teach }}</p>{{ links|safe }}</div>
+"""
+
+
+@v3.route("/qa")
+def qa_shell():
+    return page(SHELL_TMPL, active="/qa", title="QA Handoff",
+                sub="Handoff feed, handoff checks, returned-from-QA",
+                teach="This screen arrives in Phase 2 of the v3 rollout.",
+                links="")
+
+
+@v3.route("/flow")
+def flow_shell():
+    return page(SHELL_TMPL, active="/flow", title="Flow Analytics",
+                sub="Cycle time, stage breakdown, bottlenecks, focus",
+                teach="Full Flow Analytics arrives in Phase 3. Time in Status is available now:",
+                links='<a class="btn" href="/reports/time-in-status">Time in Status →</a>')
+
+
+@v3.route("/quality")
+def quality_shell():
+    return page(SHELL_TMPL, active="/quality", title="Quality",
+                sub="Bug fix quality, reopen loops, return-rate trends",
+                teach="This screen arrives in Phase 3 of the v3 rollout.", links="")
+
+
+@v3.route("/planning")
+def planning_shell():
+    return page(SHELL_TMPL, active="/planning", title="Sprint & Planning",
+                sub="Commitment vs completion, planning hygiene, due-date slip",
+                teach="Release Readiness is the interim commitment view until sprint boards are configured:",
+                links='<a class="btn" href="/reports/release">Release Readiness →</a>')
+
+
+@v3.route("/investigate")
+def investigate_shell():
+    return page(SHELL_TMPL, active="/investigate", title="Ticket Investigator",
+                sub="Full forensic timeline for one ticket",
+                teach="The timeline UI arrives in Phase 2 of the v3 rollout.", links="")

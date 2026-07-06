@@ -28,24 +28,63 @@ import csv
 import io
 import time
 
-from flask import Flask, Response, abort, jsonify, render_template_string, request
+from flask import Flask, Response, abort, jsonify, redirect, render_template_string, request
 
 import config as cfg
 import jira_client as jc
 import reports as R
 import reports_web
 
-import dev_reports_web
-
 app = Flask(__name__)
 # Eight executive reports (daily movement, sprint, dev/QA productivity, status
 # duration, release readiness, executive dashboard, individual activity) live here.
 app.register_blueprint(reports_web.bp)
-# The 18 developer-discipline reports (Jira Developer Reports spec).
-app.register_blueprint(dev_reports_web.devbp)
 # v3 screens: Settings, My Day, Attention, QA, Flow, Quality, Planning, Investigator.
 import screens_web
 app.register_blueprint(screens_web.v3)
+
+# ---------------------------------------------------------------------------
+# v3 migration: deprecated routes 301 to their replacement screens and log hits
+# so redirects can be removed once traffic reaches zero (§3 of the instructions).
+# ---------------------------------------------------------------------------
+
+DEPRECATED_ROUTES = {
+    "/reports/daily": "/my-day/feed",
+    "/reports/developers": "/qa",
+    "/reports/qa": "/qa",
+    "/reports/status-duration": "/flow",
+    "/dev-reports": "/my-day",
+    "/dev-reports/daily-activity": "/my-day/feed",
+    "/dev-reports/silent-tickets": "/attention",
+    "/dev-reports/multiple-active": "/flow",
+    "/dev-reports/eod-discipline": "/my-day/rollup",
+    "/dev-reports/rfqa-contribution": "/qa",
+    "/dev-reports/returned-from-qa": "/qa",
+    "/dev-reports/cycle-time": "/flow",
+    "/dev-reports/stuck-aging": "/attention",
+    "/dev-reports/worklog-completeness": "/my-day",
+    "/dev-reports/no-estimate": "/planning",
+    "/dev-reports/overdue": "/attention",
+    "/dev-reports/handoff-quality": "/qa",
+    "/dev-reports/status-no-comment": "/qa",
+    "/dev-reports/blocked": "/attention",
+    "/dev-reports/sprint-commitment": "/planning",
+    "/dev-reports/timeline": "/investigate",
+    "/dev-reports/focus": "/flow",
+    "/dev-reports/bug-quality": "/quality",
+}
+
+
+def _make_redirect(old, new):
+    def _r(**kwargs):
+        app.logger.info("deprecated route hit: %s -> %s", old, new)
+        return redirect(new, code=301)
+    return _r
+
+
+for _i, (_old, _new) in enumerate(DEPRECATED_ROUTES.items()):
+    app.add_url_rule(_old, endpoint=f"deprecated_{_i}", view_func=_make_redirect(_old, _new))
+
 
 # ---- tiny in-memory cache so we don't hammer the Jira API on every refresh ----
 _CACHE: dict = {"data": None, "ts": 0.0}
@@ -163,46 +202,6 @@ BASE_CSS = """
   .btn-ghost:hover { background:#f4f5f7;border-color:#b3bac5;text-decoration:none; }
 </style>
 """ + reports_web.LOADING_OVERLAY
-
-OVERVIEW_TMPL = BASE_CSS + """
-<header>
-  <h1>Developer Activity Report</h1>
-  <div class="sub">{{ projects }} &middot; completed in last {{ window }} days &middot; generated {{ generated }}</div>
-</header>
-<div class="wrap">
-  <div class="cards">
-    <div class="card"><div class="n">{{ total_done }}</div><div class="l">Tickets completed</div></div>
-    <div class="card"><div class="n">{{ total_wip }}</div><div class="l">In progress now</div></div>
-    <div class="card"><div class="n">{{ team_cycle }}</div><div class="l">Median cycle time</div></div>
-    <div class="card"><div class="n">{{ team_oldest }}</div><div class="l">Oldest WIP (in status)</div></div>
-  </div>
-
-  <div class="toolbar">
-    <a class="btn" href="/exec">Executive dashboard &amp; reports →</a>
-    <a class="btn" href="/report.xlsx" download>Download Excel</a>
-  </div>
-
-  <table>
-    <tr>
-      <th>Developer</th><th>Open assigned</th><th>Completed</th><th>Avg cycle</th><th>Median cycle</th>
-      <th>In progress</th><th>Oldest WIP</th>
-    </tr>
-    {% for d in devs %}
-    <tr>
-      <td><a href="/developer/{{ d.name|urlencode }}">{{ d.name }}</a></td>
-      <td>{{ d.open_count }}</td>
-      <td>{{ d.throughput }}</td>
-      <td>{{ fmt(d.avg_cycle) }}</td>
-      <td>{{ fmt(d.median_cycle) }}</td>
-      <td>{{ d.in_progress|length }}</td>
-      <td>{{ fmt(d.oldest_in_progress) }}</td>
-    </tr>
-    {% endfor %}
-  </table>
-  <p class="muted">Cycle time = first entry into an In&nbsp;Progress status &rarr; Done, from the issue changelog.
-  Oldest WIP = days the ticket has sat in its current status. Grouped by current assignee.</p>
-</div>
-"""
 
 DEV_TMPL = BASE_CSS + """
 <header>
@@ -528,22 +527,13 @@ HIST_TMPL = BASE_CSS + """
 # ---------------------------------------------------------------------------
 
 @app.route("/")
-def overview():
-    reports = get_reports()
-    devs = sorted(reports.values(), key=lambda d: (-d.throughput, -len(d.in_progress)))
-    total_done = sum(d.throughput for d in devs)
-    total_wip = sum(len(d.in_progress) for d in devs)
-    all_cycle = [t.cycle_days for d in devs for t in d.completed if t.cycle_days is not None]
-    all_oldest = [d.oldest_in_progress for d in devs if d.oldest_in_progress is not None]
-    from statistics import median
-    return render_template_string(
-        OVERVIEW_TMPL, devs=devs, fmt=fmt,
-        projects=", ".join(jc.PROJECT_KEYS), window=jc.WINDOW_DAYS,
-        generated=time.strftime("%Y-%m-%d %H:%M"),
-        total_done=total_done, total_wip=total_wip,
-        team_cycle=fmt(round(median(all_cycle), 1) if all_cycle else None),
-        team_oldest=fmt(max(all_oldest) if all_oldest else None),
-    )
+def landing():
+    """v0 overview retired (v3 migration): land per role (FR-X4 arrives fully in
+    Phase 5; until then the settings default_role decides)."""
+    import settings as _st
+    role = request.args.get("role") or _st.load().get("default_role", "lead")
+    target = {"developer": "/my-day", "lead": "/attention", "exec": "/exec"}.get(role, "/my-day")
+    return redirect(target, code=302)
 
 
 def _dev_filters(args):

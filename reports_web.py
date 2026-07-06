@@ -119,16 +119,15 @@ TOP = """
 </style>
 <nav>
  <span class="brand">LifeData Eng Reports</span>
- <a href="/exec">Executive</a>
- <a href="/reports/daily">Daily Movement</a>
- <a href="/reports/developers">Developers</a>
- <a href="/reports/qa">QA</a>
- <a href="/reports/status-duration">Status Duration</a>
- <a href="/reports/time-in-status">Time in Status</a>
- <a href="/reports/release">Release</a>
- <a href="/reports/sprints">Sprints</a>
- <a href="/dev-reports">Dev Reports</a>
- <a href="/">Workload (v0)</a>
+ <a href="/my-day">My Day</a>
+ <a href="/attention">Attention</a>
+ <a href="/qa">QA</a>
+ <a href="/flow">Flow</a>
+ <a href="/quality">Quality</a>
+ <a href="/planning">Planning</a>
+ <a href="/investigate">Investigate</a>
+ <a href="/exec">Trends</a>
+ <a href="/settings">Settings</a>
 </nav>
 """ + LOADING_OVERLAY + """
 <div class="wrap">
@@ -177,126 +176,17 @@ def exec_dashboard():
 # Report 1 — Daily movement
 # ---------------------------------------------------------------------------
 
-DAILY = """
-<h1>Daily Work Movement</h1>
-<div class="sub">{{ d.day_start.strftime('%Y-%m-%d %H:%M') }} → {{ d.day_end.strftime('%H:%M') }}</div>
-<div class="cards">
-{% for k,v in d.counts.items() %}<div class="card"><div class="n">{{ v }}</div><div class="l">{{ k }}</div></div>{% endfor %}
-</div>
-<h2>Tickets that moved</h2>
-<table><tr><th>Key</th><th>Summary</th><th>Current stage</th><th>Assignee</th></tr>
-{% for i in d.moved %}
-<tr><td><a href="{{ i.url }}" target="_blank">{{ i.key }}</a></td><td>{{ i.summary }}</td>
-<td>{{ i.stage }}</td><td>{{ i.assignee }}</td></tr>
-{% else %}<tr><td colspan="4" class="muted">No movement in window.</td></tr>{% endfor %}
-</table>
-"""
-
-
-@bp.route("/reports/daily")
-def daily():
-    return page(DAILY, d=R.daily_movement(dataset()))
-
-
 # ---------------------------------------------------------------------------
 # Report 3 — Developer productivity
 # ---------------------------------------------------------------------------
-
-DEV = """
-<h1>Developer Productivity</h1>
-<div class="sub">Last {{ d.window_days }} days · output = moved to {{ outstage }} · attributed to the person who made the move</div>
-<table><tr><th>Developer</th><th>Output</th><th>Avg dev duration</th><th>Reopened</th><th>Quality score</th></tr>
-{% for r in d.rows %}
-<tr><td>{{ r.name }}</td><td>{{ r.output }}</td><td>{{ fmt(r.avg_dev_days) }}</td>
-<td>{{ r.reopened }}</td>
-<td>{% if r.quality_score is not none %}<span class="pill {{ 'ok' if r.quality_score>=0.8 else 'warn' }}">{{ r.quality_score }}</span>{% else %}—{% endif %}</td></tr>
-{% else %}<tr><td colspan="5" class="muted">No developer output in window.</td></tr>{% endfor %}
-</table>
-<p class="muted">Quality score = Completed / (Completed + Reopened). A flow indicator, not a performance score.</p>
-"""
-
-
-@bp.route("/reports/developers")
-def developers():
-    win = int(request.args.get("days", jc.WINDOW_DAYS))
-    return page(DEV, d=R.developer_productivity(dataset(), win), outstage=cfg.DEV_OUTPUT_STAGE)
-
 
 # ---------------------------------------------------------------------------
 # Report 4 — QA productivity
 # ---------------------------------------------------------------------------
 
-QA = """
-<h1>QA Productivity</h1>
-<div class="sub">Last {{ d.window_days }} days · attributed to the person who performed the QA transition</div>
-<table><tr><th>QA</th><th>Verified</th><th>Rejected</th><th>Rejection rate</th><th>Avg testing duration</th></tr>
-{% for r in d.rows %}
-<tr><td>{{ r.name }}</td><td>{{ r.verified }}</td><td>{{ r.rejected }}</td>
-<td>{{ r.rejection_rate if r.rejection_rate is not none else '—' }}</td><td>{{ fmt(r.avg_test_days) }}</td></tr>
-{% else %}<tr><td colspan="5" class="muted">No QA activity in window.</td></tr>{% endfor %}
-</table>
-"""
-
-
-@bp.route("/reports/qa")
-def qa():
-    win = int(request.args.get("days", jc.WINDOW_DAYS))
-    return page(QA, d=R.qa_productivity(dataset(), win))
-
-
 # ---------------------------------------------------------------------------
 # Report 6 — Status duration
 # ---------------------------------------------------------------------------
-
-SD = """
-<h1>Status Duration Analysis</h1>
-<div class="sub">Average time tickets accrued in each stage during the <b>{{ label }}</b>{% if d.exclude_stuck_days %} · excluding {{ d.excluded_stuck }} ticket(s) stuck {{ d.exclude_stuck_days }}+ days{% endif %} · the worst-offenders list below is a live snapshot</div>
-<div class="sectionbox">
-  <a class="pill {{ 'ok' if params.range=='24h' else '' }}" href="?range=24h{{ ex }}">Past 24h</a>
-  <a class="pill {{ 'ok' if params.range=='7d' else '' }}" href="?range=7d{{ ex }}">Past 7 days</a>
-  <a class="pill {{ 'ok' if params.range=='30d' else '' }}" href="?range=30d{{ ex }}">Past month</a>
-  <form method="get" style="display:inline-block;margin-left:14px">
-    <input type="hidden" name="range" value="custom">
-    {% if params.exclude_stuck %}<input type="hidden" name="exclude_stuck" value="1">{% endif %}
-    From <input type="date" name="from" value="{{ params.get('from','') }}">
-    To <input type="date" name="to" value="{{ params.get('to','') }}">
-    <button class="pill" type="submit">Apply range</button>
-  </form>
-  <form method="get" style="display:inline-block;margin-left:14px">
-    <input type="hidden" name="range" value="{{ params.range }}">
-    {% if params.range=='custom' %}<input type="hidden" name="from" value="{{ params.get('from','') }}"><input type="hidden" name="to" value="{{ params.get('to','') }}">{% endif %}
-    <label class="pill {{ 'ok' if params.exclude_stuck else '' }}" style="cursor:pointer"><input type="checkbox" name="exclude_stuck" value="1" {% if params.exclude_stuck %}checked{% endif %} onchange="this.form.submit()" style="vertical-align:middle;margin-right:4px">Exclude tickets stuck {{ stuck_days }}+ days</label>
-  </form>
-</div>
-<h2>Average time per stage — {{ label }}</h2>
-<table><tr><th>Stage</th><th>Avg days</th><th>Median days</th><th>Tickets</th></tr>
-{% for r in d.rows %}
-<tr><td>{{ r.stage }}</td><td>{{ r.avg_days }}</td><td>{{ r.median_days }}</td><td>{{ r.tickets }}</td></tr>
-{% else %}<tr><td colspan="4" class="muted">No stage time accrued in this timeframe.</td></tr>{% endfor %}
-</table>
-<h2>Currently stuck the longest</h2>
-<table><tr><th>Key</th><th>Summary</th><th>Stage</th><th>Days in stage</th><th>Assignee</th></tr>
-{% for i in d.offenders %}
-<tr><td><a href="{{ i.url }}" target="_blank">{{ i.key }}</a></td><td>{{ i.summary }}</td>
-<td>{{ i.stage }}</td><td>{{ fmt(i.timeline.days_in_stage(i.stage)) }}</td><td>{{ i.assignee }}</td></tr>
-{% else %}<tr><td colspan="5" class="muted">Nothing currently open.</td></tr>{% endfor %}
-</table>
-"""
-
-
-@bp.route("/reports/status-duration")
-def status_duration():
-    start, end, label, _mode, params, fetch_jql = _window_spec(request.args)
-    stuck_days = 10
-    exclude = request.args.get("exclude_stuck") in ("1", "true", "on")
-    issues = R.load_issues(jc.fetch_issues_by_time(fetch_jql))
-    d = R.status_duration(issues, window=(start, end),
-                          exclude_stuck_days=stuck_days if exclude else None)
-    params = dict(params)
-    params["exclude_stuck"] = "1" if exclude else ""
-    ex = "&exclude_stuck=1" if exclude else ""
-    return page(SD, d=d, label=label, params=params, stuck_days=stuck_days, ex=ex)
-
 
 # ---------------------------------------------------------------------------
 # Report 7 — Release readiness
@@ -522,6 +412,8 @@ def reports_json():
     issues = dataset()
     ed = R.executive_dashboard(issues, 7)
     return jsonify({
+        "deprecation": "This combined feed is deprecated; use the per-screen "
+                       "/api/v2/... endpoints (myday, attention, feed).",
         "executive": {k: ed[k] for k in ("delivery", "productivity", "quality", "risk")},
         "developers": R.developer_productivity(issues, jc.WINDOW_DAYS)["rows"],
         "qa": R.qa_productivity(issues, jc.WINDOW_DAYS)["rows"],
