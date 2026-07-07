@@ -19,7 +19,7 @@ import checklist
 import flow_quality as fq
 import settings as st
 
-DB_PATH = os.environ.get("SNAPSHOT_DB_PATH", os.path.join(".", "data", "snapshots.db"))
+DB_PATH = os.environ.get("SNAPSHOT_DB_PATH") or os.path.join(st.data_dir(), "snapshots.db")
 
 
 def _conn(path=None):

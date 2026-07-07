@@ -79,7 +79,24 @@ DEFAULTS = {
     "default_role": "lead",
 }
 
-CONFIG_PATH = os.environ.get("APP_CONFIG_PATH", os.path.join(".", "data", "settings.json"))
+def data_dir() -> str:
+    """Directory for the config store and snapshot DB.
+
+    On Azure App Service, `/home` is the persistent mount that survives deploys
+    and restarts — unlike `/home/site/wwwroot`, which the app runs from and Azure
+    replaces on every deployment. We detect Azure via WEBSITE_SITE_NAME (always
+    set there) and default to /home/data so settings saving works out of the box
+    with no manual configuration. Locally it's ./data. Override with APP_DATA_DIR.
+    """
+    override = os.environ.get("APP_DATA_DIR")
+    if override:
+        return override
+    if os.environ.get("WEBSITE_SITE_NAME"):  # running on Azure App Service
+        return "/home/data"
+    return os.path.join(".", "data")
+
+
+CONFIG_PATH = os.environ.get("APP_CONFIG_PATH") or os.path.join(data_dir(), "settings.json")
 
 _lock = threading.Lock()
 _cache: dict = {"data": None, "mtime": 0.0, "path": None}

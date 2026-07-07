@@ -89,3 +89,9 @@
 - FR-D6: retry/backoff (Retry-After honored) on Jira search calls.
 - Known deferrals: per-project checklist scoping (FR-C3 is global for now) and
   Jira dev-status PR links (FR-D4 uses URL/keyword detection).
+
+### Ops: settings persist on Azure with no manual config
+- settings.data_dir() detects Azure App Service (WEBSITE_SITE_NAME) and stores
+  settings.json + snapshots.db under the persistent /home/data mount, which
+  survives deploys — so Settings saving works out of the box. Local dev still
+  uses ./data; APP_DATA_DIR / APP_CONFIG_PATH / SNAPSHOT_DB_PATH override.
