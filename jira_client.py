@@ -95,6 +95,22 @@ def _auth() -> tuple[str, str]:
     return (JIRA_EMAIL, JIRA_API_TOKEN)
 
 
+def _post_with_retry(url, body, attempts=3):
+    """FR-D6: respect rate limits — retry on 429/5xx with backoff (Retry-After
+    honored when present)."""
+    for i in range(attempts):
+        resp = requests.post(url, json=body, auth=_auth(),
+                             headers={"Accept": "application/json"}, timeout=60)
+        if resp.status_code not in (429, 500, 502, 503, 504) or i == attempts - 1:
+            return resp
+        try:
+            wait = float(resp.headers.get("Retry-After", 2 ** i))
+        except ValueError:
+            wait = 2 ** i
+        time.sleep(min(wait, 30))
+    return resp
+
+
 def search_issues(jql: str, fields: list[str], expand_changelog: bool = False) -> list[dict]:
     """
     Run a JQL search and return ALL matching issues, paging through results.
@@ -117,8 +133,7 @@ def search_issues(jql: str, fields: list[str], expand_changelog: bool = False) -
         if next_token:
             body["nextPageToken"] = next_token
 
-        resp = requests.post(url, json=body, auth=_auth(),
-                             headers={"Accept": "application/json"}, timeout=60)
+        resp = _post_with_retry(url, body)
         resp.raise_for_status()
         data = resp.json()
         issues.extend(data.get("issues", []))

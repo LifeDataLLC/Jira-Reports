@@ -55,7 +55,7 @@ CHROME_TOP = """
  .card .n{font-size:26px;font-weight:700}.card .l{color:#6b778c;font-size:12px;margin-top:2px}
  table{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(9,30,66,.12);margin-bottom:8px}
  th,td{text-align:left;padding:9px 13px;border-bottom:1px solid #ebecf0;font-size:13px}
- th{background:#fafbfc;color:#6b778c;position:sticky;top:0}
+ th{background:#fafbfc;color:#6b778c;position:sticky;top:0;cursor:pointer;user-select:none}
  tr:hover td{background:#f7f8fa}
  a{color:#0052cc;text-decoration:none}a:hover{text-decoration:underline}
  .pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;background:#dfe1e6}
@@ -79,6 +79,30 @@ CHROME_TOP = """
  <span class="brand">LifeData Eng Reports</span>
  {NAVLINKS}
 </nav>
+
+<script>
+document.addEventListener('click',function(ev){
+  var th=ev.target.closest('th'); if(!th)return;
+  var table=th.closest('table'); if(!table)return;
+  var header=table.querySelector('tr'); if(!header||th.parentNode!==header)return;
+  var col=Array.prototype.indexOf.call(header.children,th);
+  var asc=th.getAttribute('data-dir')!=='asc';
+  Array.prototype.forEach.call(header.children,function(h){h.removeAttribute('data-dir');
+    var i=h.querySelector('.sort-ind'); if(i)i.remove();});
+  th.setAttribute('data-dir',asc?'asc':'desc');
+  var ind=document.createElement('span'); ind.className='sort-ind'; ind.style.color='#0052cc';
+  ind.style.fontSize='10px'; ind.textContent=asc?' ▲':' ▼'; th.appendChild(ind);
+  var rows=Array.prototype.slice.call(table.querySelectorAll('tr')).filter(function(r){
+    return r!==header && !r.querySelector('td[colspan]');});
+  function val(r){var c=r.children[col]; if(!c)return '';
+    var t=c.textContent.trim(); var n=parseFloat(t.replace(/[^0-9.\\-]/g,''));
+    return (t!=='' && !isNaN(n) && /\\d/.test(t)) ? n : t.toLowerCase();}
+  rows.sort(function(a,b){var x=val(a),y=val(b);
+    if(typeof x!==typeof y){x=String(x);y=String(y);}
+    return x<y?(asc?-1:1):(x>y?(asc?1:-1):0);});
+  rows.forEach(function(r){table.appendChild(r);});
+});
+</script>
 """
 
 # The loading overlay from the legacy chrome is reused for consistency.
@@ -473,15 +497,25 @@ ATTN_TMPL = """
   </select></label>""") + """
 <p class="muted">{{ d.rows|length }} ticket(s) need attention. <a href="/api/v2/attention.csv?{{ request.query_string.decode() }}" download>Download CSV</a></p>
 <table>
-<tr><th>Issue</th><th>Summary</th><th>Developer</th><th>Status</th><th>Reasons</th></tr>
+<tr><th>Issue</th><th>Summary</th><th>Developer</th><th>Status</th><th>Reasons</th><th></th></tr>
 {% for r in d.rows %}
 <tr>
  <td><a href="{{ r.issue.url }}" target="_blank">{{ r.issue.key }}</a></td>
  <td>{{ r.issue.summary }}</td><td>{{ r.issue.assignee }}</td><td>{{ r.issue.status }}</td>
  <td>{% for reason in r.reasons %}<span class="chip {{ 'bad' if reason.kind in ('silent','aging','overdue','disposition') else 'warn' }}">⚠ {{ reason.tag }}</span>{% endfor %}</td>
+ <td><button type="button" class="btn-ghost nudge" data-msg="Hi! Quick check on {{ r.issue.key }} ({{ r.issue.summary|replace('\"','') }}) — it's showing {{ r.reasons|map(attribute='tag')|join(', ') }}. Could you add an update, or move it to Backlog / set a new start date if it's parked? Thanks! {{ r.issue.url }}">Copy nudge</button></td>
 </tr>
-{% else %}<tr><td colspan="5" class="muted">Nothing needs attention. 🎉</td></tr>{% endfor %}
+{% else %}<tr><td colspan="6" class="muted">Nothing needs attention. 🎉</td></tr>{% endfor %}
 </table>
+<script>
+document.addEventListener('click',function(ev){
+  var b=ev.target.closest('.nudge'); if(!b)return;
+  navigator.clipboard.writeText(b.getAttribute('data-msg')).then(function(){
+    var t=b.textContent; b.textContent='Copied ✓';
+    setTimeout(function(){b.textContent=t;},1500);
+  });
+});
+</script>
 """
 
 

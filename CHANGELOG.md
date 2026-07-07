@@ -81,3 +81,11 @@
   of env, with the teaching empty state.
 - Role-based landing on `/` (developer→My Day, lead→Attention, exec→Trends)
   via `?role=` or the Settings default.
+
+### Post-phase polish
+- FR-U6: click-to-sort (numeric-aware) on every v3 table; sticky headers.
+- FR-A4: "Copy nudge" button on Attention rows — polite pre-written Teams
+  message with the ticket link copied to clipboard.
+- FR-D6: retry/backoff (Retry-After honored) on Jira search calls.
+- Known deferrals: per-project checklist scoping (FR-C3 is global for now) and
+  Jira dev-status PR links (FR-D4 uses URL/keyword detection).
