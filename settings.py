@@ -42,11 +42,14 @@ _STAGE_TO_BUCKET = {
 }
 
 DEFAULTS = {
-    "version": 1,
+    "version": 2,
     # status name -> bucket
     "status_buckets": {},
     # status name -> max days in status before it lands on the Attention Board
     "status_thresholds": {},
+    # the "active work" statuses: {status: {"lane": .., "pause": ..}} — drives the
+    # one-active-per-lane rule (Rule 1) and the pause-at-EOD check (Rule 3).
+    "active_statuses": {},
     # bucket-level threshold defaults (PRD §9 proposal); null = no threshold
     "bucket_thresholds": {"todo": None, "active_dev": 5, "qa_stage": 3,
                           "paused": 10, "rework": 2, "done": None},
@@ -57,7 +60,8 @@ DEFAULTS = {
     # My Day checklist item toggles (FR-C3)
     "checklist_items": {"status_mapped": True, "comment_today": True,
                         "worklog_today": True, "start_date": True,
-                        "due_date": True, "not_over_threshold": True,
+                        "due_date": True, "has_release": True, "eod_pause": True,
+                        "not_over_threshold": True,
                         "handoff_comment": True, "blocked_reason": True},
     # QA handoff: comment by transition author within this many hours before/at handoff
     "handoff_window_hours": 4,
@@ -102,11 +106,23 @@ _lock = threading.Lock()
 _cache: dict = {"data": None, "mtime": 0.0, "path": None}
 
 
+def apply_workflow(data: dict) -> dict:
+    """Load the LIFEDATAV2 workflow (workflow.py) into a settings dict: bucket
+    map, active-status lanes/pauses, parked-state thresholds, and the gates the
+    workflow's rules require. Admin overrides afterward still win per status."""
+    import workflow as wf
+    data["status_buckets"] = dict(wf.BUCKETS)
+    data["active_statuses"] = json.loads(json.dumps(wf.ACTIVE))
+    data["status_thresholds"] = dict(wf.THRESHOLDS)
+    for g in wf.GATES_ON:
+        data["gates"][g] = True
+    return data
+
+
 def _seed() -> dict:
-    """Fresh settings seeded from the legacy config.py stage map."""
+    """Fresh settings seeded from the LIFEDATAV2 workflow."""
     data = json.loads(json.dumps(DEFAULTS))  # deep copy
-    for status, stage in legacy.STATUS_STAGE.items():
-        data["status_buckets"][status] = _STAGE_TO_BUCKET.get(stage, "todo")
+    apply_workflow(data)
     data["board_ids"] = [b for b in legacy.BOARD_IDS]
     return data
 
@@ -184,3 +200,19 @@ def unmapped_statuses(seen: set[str]) -> list[str]:
     """Statuses present in synced data but not classified into a bucket."""
     mapped = set(load()["status_buckets"])
     return sorted(s for s in seen if s and s not in mapped)
+
+
+# ---- active-status layer (Rules 1 & 3) ----
+
+def is_active_status(status: str) -> bool:
+    return status in load().get("active_statuses", {})
+
+
+def lane_of(status: str) -> str | None:
+    a = load().get("active_statuses", {}).get(status)
+    return a.get("lane") if a else None
+
+
+def pause_for(status: str) -> str | None:
+    a = load().get("active_statuses", {}).get(status)
+    return a.get("pause") if a else None

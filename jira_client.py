@@ -251,7 +251,7 @@ def fetch_dev_dataset(project: str | None = None, lookback_days: int | None = No
     cf = detect_custom_fields()
     fields = ["summary", "status", "assignee", "reporter", "issuetype", "priority",
               "created", "updated", "resolutiondate", "duedate", "labels",
-              "timeoriginalestimate", "comment", "worklog"]
+              "timeoriginalestimate", "comment", "worklog", "fixVersions"]
     fields += [v for v in (cf["story_points"], cf["sprint"], cf.get("start_date")) if v]
     jql = (f'project in ({projects}) AND ('
            f'statusCategory != Done OR updated >= -{lookback}d) ORDER BY updated DESC')

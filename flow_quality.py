@@ -13,6 +13,7 @@ import datetime as dt
 import analytics as A
 import qa_handoff as qh
 import settings as st
+import workflow
 
 
 def _first_entry(issue, buckets) -> dt.datetime | None:
@@ -83,19 +84,22 @@ def bottleneck(issues) -> list[dict]:
 
 
 def multiple_active(issues, developer=None, match=None) -> list[dict]:
-    """FR-F5: >1 ticket in active_dev at once; qa_stage excluded by design."""
-    by_dev = {}
+    """Rule 1 / FR-F5: more than one ticket in the SAME active lane at once —
+    dev (In Progress/Development), or a testing lane (QA / Staging / Production).
+    Each lane is enforced independently, per the team's status reference."""
+    by = {}
     for i in issues:
-        if st.bucket_of(i.status, i.category) == "active_dev" and i.assignee != "Unassigned":
-            by_dev.setdefault((i.assignee, i.assignee_id), []).append(i)
+        if st.is_active_status(i.status) and i.assignee != "Unassigned":
+            by.setdefault((i.assignee, i.assignee_id, st.lane_of(i.status)), []).append(i)
     rows = []
-    for (name, aid), tickets in sorted(by_dev.items(), key=lambda kv: -len(kv[1])):
+    for (name, aid, lane), tickets in sorted(by.items(), key=lambda kv: -len(kv[1])):
         if len(tickets) <= 1:
             continue
         if developer and match and not match(developer, name, aid):
             continue
-        rows.append({"developer": name, "account_id": aid, "count": len(tickets),
-                     "tickets": tickets})
+        rows.append({"developer": name, "account_id": aid, "lane": lane,
+                     "lane_label": workflow.LANE_LABELS.get(lane, lane),
+                     "count": len(tickets), "tickets": tickets})
     return rows
 
 

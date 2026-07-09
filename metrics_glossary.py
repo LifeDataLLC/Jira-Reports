@@ -33,6 +33,12 @@ GLOSSARY = {
                         "not a developer problem.",
     "disposition": "An over-threshold ticket must move to Backlog or get a future start date "
                    "within 48 hours.",
+    "eod_pause": "Active tickets must be moved to their paused status at end of day "
+                 "(and back to active when resumed). Flags tickets left in an active status overnight.",
+    "has_release": "Every ticket must belong to a release (fixVersion) — an upcoming feature, "
+                   "bug, or the next backlog release.",
+    "one_active": "One ticket active at a time per lane: dev (In Progress/Development), QA, "
+                  "staging, and production testing are each enforced separately.",
     "blocked": "Jira's Flagged field (changelog-tracked). Label matches are low-confidence hints.",
 }
 

@@ -76,7 +76,12 @@ class DevIssue:
     worklogs: list                         # [{"ts","author","author_id","seconds","note"}]
     field_events: list = field(default_factory=list)  # [(ts, author, kind, from, to)]
     start_date: dt.date | None = None
+    fix_versions: list = field(default_factory=list)   # release names (fixVersion)
     timeline: A.Timeline = None
+
+    @property
+    def has_release(self) -> bool:
+        return bool(self.fix_versions)
 
     @property
     def url(self):
@@ -200,6 +205,7 @@ def load_dev_issues(raw_list, custom_fields=None) -> list[DevIssue]:
             worklogs=[w for w in worklogs if w["ts"]],
             field_events=field_events,
             start_date=sdate,
+            fix_versions=[v.get("name") for v in (f.get("fixVersions") or []) if v.get("name")],
             timeline=A.analyze(hist, f.get("created"), f.get("resolutiondate"),
                                status.get("name", ""), cat),
         ))

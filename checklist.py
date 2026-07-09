@@ -16,8 +16,9 @@ import activity
 import analytics as A
 import settings as st
 
-CHECK_ORDER = ["status_mapped", "comment_today", "worklog_today", "start_date",
-               "due_date", "not_over_threshold", "handoff_comment", "blocked_reason"]
+CHECK_ORDER = ["status_mapped", "comment_today", "worklog_today", "due_date",
+               "has_release", "eod_pause", "not_over_threshold", "start_date",
+               "handoff_comment", "blocked_reason"]
 
 CHECK_LABELS = {
     "status_mapped": "Status classified",
@@ -25,6 +26,8 @@ CHECK_LABELS = {
     "worklog_today": "Worklog today",
     "start_date": "Start date OK",
     "due_date": "Due date set",
+    "has_release": "Belongs to a release",
+    "eod_pause": "Paused for end of day",
     "not_over_threshold": "Within aging threshold",
     "handoff_comment": "Handoff comment",
     "blocked_reason": "Blocked reason",
@@ -93,6 +96,23 @@ def evaluate_ticket(issue, day: dt.date, now=None) -> dict:
             "" if issue.duedate else "missing due date")
     else:
         add("due_date", "na", "due dates not required")
+
+    # Rule 5: every ticket must belong to a release (fixVersion).
+    add("has_release", "pass" if issue.has_release else "fail",
+        (", ".join(issue.fix_versions)) if issue.has_release
+        else "not assigned to a feature/bug/backlog release")
+
+    # Rule 3: pause the active ticket at end of day.
+    if st.is_active_status(issue.status):
+        entered = issue.status_events[-1][0] if issue.status_events else issue.created
+        carried = bool(entered and entered.date() < (now or A.now_utc()).date())
+        pause = st.pause_for(issue.status) or "its paused status"
+        if carried:
+            add("eod_pause", "fail", f"left active overnight — move to {pause} at end of day")
+        else:
+            add("eod_pause", "na", f"move to {pause} before you sign off")
+    else:
+        add("eod_pause", "na", "not an active status")
 
     thr = st.threshold_for(issue.status)
     days_in = _days_in_current_status(issue, now)

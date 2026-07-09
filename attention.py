@@ -22,8 +22,9 @@ def _reasons_for(issue, now) -> list[dict]:
     reasons = []
     bucket = st.bucket_of(issue.status, issue.category)
 
-    # Silent: no activity-feed event in N days while in active_dev/rework (FR-A1)
-    if bucket in ("active_dev", "rework"):
+    # Silent: no activity-feed event in N days while actively working (any active
+    # lane — dev or a testing lane) or in rework (FR-A1).
+    if bucket in ("active_dev", "rework") or st.is_active_status(issue.status):
         last = activity.last_event_ts(issue)
         if last:
             silent_days = (now - last).total_seconds() / 86400
@@ -31,6 +32,18 @@ def _reasons_for(issue, now) -> list[dict]:
             if silent_days >= n:
                 reasons.append({"tag": f"Silent {silent_days:.0f}d",
                                 "kind": "silent", "severity": silent_days - n})
+
+    # Rule 3: active ticket not paused (left in an active status overnight).
+    if st.is_active_status(issue.status):
+        entered = issue.status_events[-1][0] if issue.status_events else issue.created
+        if entered and entered.date() < now.date():
+            days = (now - entered).total_seconds() / 86400
+            reasons.append({"tag": f"Not paused {days:.0f}d",
+                            "kind": "not_paused", "severity": days})
+
+    # Rule 5: work in flight with no release assigned.
+    if bucket in ("active_dev", "rework", "qa_stage") and not issue.has_release:
+        reasons.append({"tag": "No release", "kind": "no_release", "severity": 0.5})
 
     # Aging: over the per-status threshold
     thr = st.threshold_for(issue.status)

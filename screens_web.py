@@ -205,6 +205,12 @@ SETTINGS_TMPL = """
 <h1>Settings</h1>
 <div class="sub">Status classification, thresholds, and feature gates — changes apply immediately, no deploy needed</div>
 {% if saved %}<div class="banner" style="background:#e3fcef;border-color:#abf5d1;color:#006644">Settings saved.</div>{% endif %}
+<form method="post" style="margin-bottom:14px">
+  <button class="btn-ghost" name="load_workflow" value="1" type="submit"
+    onclick="return confirm('Overwrite the status classification, thresholds, and active-status lanes with the LIFEDATAV2 workflow defaults? Your other settings are kept.')">
+    ↻ Load LIFEDATAV2 workflow defaults</button>
+  <span class="muted">maps every workflow status to a bucket, sets the 5 active lanes + pauses, and enables worklog/due-date rules</span>
+</form>
 <form method="post">
 <div class="sectionbox">
   <h2 style="margin-top:0">Status classification <span class="muted">(every status must be assigned to exactly one bucket)</span></h2>
@@ -219,11 +225,13 @@ SETTINGS_TMPL = """
       </select></td>
       <td><input type="number" step="0.5" min="0" name="threshold__{{ status }}"
                  value="{{ thresholds.get(status, '') }}" placeholder="{{ bucket_default(status) }}" style="width:80px"></td>
-      <td>{% if status in unmapped %}<span class="pill bad">needs classification</span>{% endif %}</td>
+      <td>{% if status in unmapped %}<span class="pill bad">needs classification</span>{% endif %}
+        {% if status in s.active_statuses %}<span class="pill ok" title="Active work status — one at a time per lane; pause at end of day">⚡ active · {{ s.active_statuses[status].lane }} → {{ s.active_statuses[status].pause }}</span>{% endif %}</td>
     </tr>
     {% endfor %}
   </table>
-  <p class="muted">Blank threshold = the bucket default below. Unmapped statuses are excluded from metrics and flagged on every screen.</p>
+  <p class="muted">Blank threshold = the bucket default below. Unmapped statuses are excluded from metrics and flagged on every screen.
+  <b>⚡ active</b> statuses are the blue "actively working" statuses (one per lane at a time; move to their pause at end of day).</p>
 </div>
 <div class="sectionbox">
   <h2 style="margin-top:0">Bucket threshold defaults</h2>
@@ -284,7 +292,8 @@ GATE_LABELS = [
 CHECK_LABELS = [
     ("status_mapped", "Status classified"), ("comment_today", "Comment today"),
     ("worklog_today", "Worklog today (gated)"), ("start_date", "Start date present (gated)"),
-    ("due_date", "Due date present (gated)"), ("not_over_threshold", "Not over aging threshold"),
+    ("due_date", "Due date present (gated)"), ("has_release", "Belongs to a release"),
+    ("eod_pause", "Paused for end of day"), ("not_over_threshold", "Not over aging threshold"),
     ("handoff_comment", "Handoff comment when moved to QA"), ("blocked_reason", "Blocked reason comment"),
 ]
 
@@ -305,6 +314,15 @@ def _statuses_seen():
 def settings_screen():
     s = st.load()
     saved = False
+    if request.method == "POST" and request.form.get("load_workflow"):
+        st.apply_workflow(s)
+        st.save(s)
+        return page(SETTINGS_TMPL, active="/settings", show_banner=False, s=s, saved=True,
+                    statuses=_statuses_seen(), unmapped=set(st.unmapped_statuses(set(_statuses_seen()))),
+                    mapping=s["status_buckets"], thresholds=s["status_thresholds"],
+                    buckets=st.BUCKETS, bucket_labels=st.BUCKET_LABELS,
+                    bucket_default=lambda status: (s["bucket_thresholds"].get(s["status_buckets"].get(status)) or "—"),
+                    gate_labels=GATE_LABELS, check_labels=CHECK_LABELS)
     if request.method == "POST":
         form = request.form
         s["status_buckets"] = {}
@@ -502,7 +520,7 @@ ATTN_TMPL = """
 <tr>
  <td><a href="{{ r.issue.url }}" target="_blank">{{ r.issue.key }}</a></td>
  <td>{{ r.issue.summary }}</td><td>{{ r.issue.assignee }}</td><td>{{ r.issue.status }}</td>
- <td>{% for reason in r.reasons %}<span class="chip {{ 'bad' if reason.kind in ('silent','aging','overdue','disposition') else 'warn' }}">⚠ {{ reason.tag }}</span>{% endfor %}</td>
+ <td>{% for reason in r.reasons %}<span class="chip {{ 'bad' if reason.kind in ('silent','aging','overdue','disposition','not_paused') else 'warn' }}">⚠ {{ reason.tag }}</span>{% endfor %}</td>
  <td><button type="button" class="btn-ghost nudge" data-msg="Hi! Quick check on {{ r.issue.key }} ({{ r.issue.summary|replace('\"','') }}) — it's showing {{ r.reasons|map(attribute='tag')|join(', ') }}. Could you add an update, or move it to Backlog / set a new start date if it's parked? Thanks! {{ r.issue.url }}">Copy nudge</button></td>
 </tr>
 {% else %}<tr><td colspan="6" class="muted">Nothing needs attention. 🎉</td></tr>{% endfor %}
@@ -859,13 +877,13 @@ FLOW_TMPL = """
   <div class="card"><div class="n">{{ hfmt(stats.cycle.p85) }}</div><div class="l">{{ g('p85','Cycle p85')|safe }}</div></div>
 </div>
 
-<h2>{{ g('multiple_active','Multiple active tickets')|safe }} <span class="muted">(rule: one active ticket; QA-stage excluded)</span></h2>
+<h2>{{ g('multiple_active','Multiple active tickets')|safe }} <span class="muted">(rule: one active ticket per lane — dev / QA / staging / production)</span></h2>
 <table>
-<tr><th>Developer</th><th>Active count</th><th>Tickets</th></tr>
+<tr><th>Developer</th><th>Lane</th><th>Active count</th><th>Tickets</th></tr>
 {% for v in violations %}
-<tr><td>{{ v.developer }}</td><td><span class="pill bad">{{ v.count }}</span></td>
+<tr><td>{{ v.developer }}</td><td><span class="pill">{{ v.lane_label }}</span></td><td><span class="pill bad">{{ v.count }}</span></td>
 <td>{% for t in v.tickets %}<a href="{{ t.url }}" target="_blank">{{ t.key }}</a> <span class="muted">({{ t.status }})</span>{{ ', ' if not loop.last }}{% endfor %}</td></tr>
-{% else %}<tr><td colspan="3" class="muted">No one holds more than one active-dev ticket. 🎉</td></tr>{% endfor %}
+{% else %}<tr><td colspan="4" class="muted">No one holds more than one active ticket in any lane. 🎉</td></tr>{% endfor %}
 </table>
 
 <h2>{{ g('bottleneck','Team bottleneck')|safe }} <span class="muted">(median days per status)</span></h2>

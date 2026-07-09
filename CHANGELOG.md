@@ -95,3 +95,17 @@
   settings.json + snapshots.db under the persistent /home/data mount, which
   survives deploys — so Settings saving works out of the box. Local dev still
   uses ./data; APP_DATA_DIR / APP_CONFIG_PATH / SNAPSHOT_DB_PATH override.
+
+### Dev Team Rules — LIFEDATAV2 workflow applied
+- workflow.py encodes the full workflow: every status → bucket, the 5 active
+  statuses with lane (dev/qa/staging/production) + pause counterpart, and
+  parked-state thresholds. Seeds the settings store; re-applied via a "Load
+  LIFEDATAV2 workflow" button on /settings.
+- Rule 1 (one active per lane): Flow → Multiple active tickets is now lane-aware
+  (dev + each testing lane enforced independently).
+- Rule 3 (pause at EOD): My Day "Paused for end of day" check + Attention
+  "Not paused" reason for tickets left active overnight (names the pause target).
+- Rule 5 (belongs to a release): fixVersion ingested; My Day "Belongs to a
+  release" check + Attention "No release" reason.
+- Rules 4 & 6 (worklog + due date) enabled by the workflow; Rule 2 already via
+  Silent/Aging; Rule 7 via Settings. docs/dev_team_rules_mapping.md added.

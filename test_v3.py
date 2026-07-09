@@ -5,6 +5,7 @@ pattern (LIFEDATAV2-shaped changelogs). Run: python3 test_v3.py
 """
 
 import datetime as dt
+import json
 import os
 import tempfile
 
@@ -31,17 +32,26 @@ def check(name, cond):
 
 def test_settings():
     s = st.load()
-    check("seeds from config.py", s["status_buckets"].get("In Progress / Start Investigation") == "active_dev")
+    check("seeds workflow active_dev", s["status_buckets"].get("In Progress / Start Investigation") == "active_dev")
     check("seed rework", s["status_buckets"].get("Reopen") == "rework")
     check("seed qa", s["status_buckets"].get("Ready for QA (QA Env)") == "qa_stage")
     check("seed staging->qa", s["status_buckets"].get("In Staging Testing") == "qa_stage")
-    check("gates default off", not any(s["gates"].values()))
+    # apply_workflow is deterministic regardless of shared-file state
+    fresh = json.loads(json.dumps(st.DEFAULTS))
+    st.apply_workflow(fresh)
+    check("workflow enables worklog+due gates",
+          fresh["gates"]["worklogs_required"] and fresh["gates"]["due_dates_required"])
+    check("other gates off", not fresh["gates"]["sprints_enabled"] and not fresh["gates"]["estimates_used"])
+    check("active statuses seeded", len(fresh["active_statuses"]) == 5)
+    check("active lane + pause", fresh["active_statuses"]["In QA Testing (QA Env)"]["lane"] == "qa"
+          and fresh["active_statuses"]["In QA Testing (QA Env)"]["pause"] == "Pause QA Testing")
 
     check("bucket_of mapped", st.bucket_of("Reopen") == "rework")
     check("bucket_of unmapped is None", st.bucket_of("Weird New Status") is None)
     check("bucket_of done category fallback", st.bucket_of("Weird Done", "Done") == "done")
 
-    check("threshold bucket default", st.threshold_for("Ready for QA (QA Env)") == 3)
+    check("threshold per-status from workflow", st.threshold_for("Ready for QA (QA Env)") == 2)
+    check("threshold bucket default", st.threshold_for("Development Completed") == 3)  # qa_stage default
     s["status_thresholds"]["Ready for QA (QA Env)"] = 1.5
     st.save(s)
     check("threshold per-status override", st.threshold_for("Ready for QA (QA Env)") == 1.5)
@@ -71,7 +81,8 @@ def adf(text):
 
 
 def mkraw(key, status, cat, assignee="Jane Doe", typ="Story", created_d=10,
-          events=None, comments=None, worklogs=None, duedate=None, labels=None):
+          events=None, comments=None, worklogs=None, duedate=None, labels=None,
+          fix_versions=None):
     hist = []
     for e in (events or []):
         d_ago, author, fieldname, frm, to = e
@@ -87,6 +98,7 @@ def mkraw(key, status, cat, assignee="Jane Doe", typ="Story", created_d=10,
         "updated": iso(now - dt.timedelta(days=1)),
         "resolutiondate": None, "duedate": duedate, "labels": labels or [],
         "timeoriginalestimate": None,
+        "fixVersions": [{"name": v} for v in (fix_versions or [])],
         "comment": {"comments": [{"created": iso(now - dt.timedelta(days=d, minutes=m)),
                                   "author": {"displayName": a, "accountId": a.lower().replace(" ", "")},
                                   "body": adf(t)} for d, m, a, t in (comments or [])]},
@@ -118,6 +130,10 @@ def test_field_events():
 def test_checklist():
     import checklist
     import dev_reports as dr
+    sset = st.load()
+    sset["gates"]["worklogs_required"] = False
+    sset["gates"]["due_dates_required"] = False
+    st.save(sset)
     today = now.date()
     # Active ticket, commented today, moved to QA today WITH handoff comment
     good = mkraw("C-1", "Ready for QA (QA Env)", "In Progress", events=[
@@ -153,16 +169,16 @@ def test_attention():
     s = st.load()
     s["silent_days"] = 2
     st.save(s)
-    # Silent 5d in active_dev + aging (threshold 5d default, in status 12d)
-    silent = mkraw("A-1", "In Progress / Start Investigation", "In Progress", events=[
-        (12, "Jane Doe", "status", "To Do", "In Progress / Start Investigation")])
-    silent["fields"]["updated"] = iso(now - dt.timedelta(days=5))
-    # Fresh ticket: commented today, within threshold
-    fresh = mkraw("A-2", "In Progress / Start Investigation", "In Progress", events=[
-        (1, "Jane Doe", "status", "To Do", "In Progress / Start Investigation")],
-        comments=[(0, 0, "Jane Doe", "on it")])
-    # QA-parked (Tanvir case): threshold qa_stage=3, sitting 9d — but not "silent" (not active_dev)
-    parked = mkraw("A-3", "Ready for QA (QA Env)", "In Progress", events=[
+    # Silent 12d in active_dev + aging + not-paused (all have a release so no_release stays quiet)
+    silent = mkraw("A-1", "In Progress / Start Investigation", "In Progress", fix_versions=["R1"],
+                   events=[(12, "Jane Doe", "status", "To Do", "In Progress / Start Investigation")])
+    # Fresh ticket: entered its active status TODAY, commented today, has a release + due date
+    fresh = mkraw("A-2", "In Progress / Start Investigation", "In Progress", fix_versions=["R1"],
+                  duedate="2026-08-01",
+                  events=[(0, "Jane Doe", "status", "To Do", "In Progress / Start Investigation")],
+                  comments=[(0, 0, "Jane Doe", "on it")])
+    # QA-parked (Tanvir case): threshold qa_stage=2, sitting 9d — but not "silent" (not active)
+    parked = mkraw("A-3", "Ready for QA (QA Env)", "In Progress", fix_versions=["R1"], events=[
         (9, "QA Bob", "status", "Development / In Design", "Ready for QA (QA Env)")])
     issues = dr.load_dev_issues([silent, fresh, parked])
     d = attention.board(issues, now=now)
@@ -177,12 +193,12 @@ def test_attention():
     check("QA-parked not silent", "silent" not in kinds3)
     check("severity sort worst first",
           d["rows"][0]["severity"] >= d["rows"][-1]["severity"])
-    # boundary: exactly at threshold is NOT aging (> not >=)
+    # boundary: exactly at threshold (Ready for QA = 2d) is NOT aging (> not >=)
     edge = mkraw("A-4", "Ready for QA (QA Env)", "In Progress", events=[
-        (3, "QA Bob", "status", "Development / In Design", "Ready for QA (QA Env)")])
+        (2, "QA Bob", "status", "Development / In Design", "Ready for QA (QA Env)")])
     d2 = attention.board(dr.load_dev_issues([edge]),
-                         now=edge and (A.parse_ts(edge["changelog"]["histories"][0]["created"])
-                                       + dt.timedelta(days=3)))
+                         now=A.parse_ts(edge["changelog"]["histories"][0]["created"])
+                         + dt.timedelta(days=2))
     check("boundary day not aging", all("aging" != r["kind"]
           for row in d2["rows"] for r in row["reasons"]))
 
@@ -380,6 +396,88 @@ def test_disposition():
     check("48h breach detected", d["overdue_48h"] is True)
     comp = attention.disposition_compliance(dr.load_dev_issues([raw2]), now)
     check("compliance counts flagged", comp["flagged"] == 1 and comp["within_48h"] == 0)
+
+
+def test_dev_team_rules():
+    """The seven Jira Ticket Rules mapped to checks."""
+    import attention
+    import checklist
+    import dev_reports as dr
+    import flow_quality as fq
+    # reset gates to workflow state (worklogs + due dates required)
+    s = st.load()
+    s["gates"]["worklogs_required"] = True
+    s["gates"]["due_dates_required"] = True
+    st.save(s)
+
+    # Rule 1: one active per lane. Sam has 2 in DEV lane + 1 in QA lane.
+    dev1 = mkraw("R1-1", "In Progress / Start Investigation", "In Progress", assignee="Sam Lee",
+                 events=[(0, "Sam Lee", "status", "To Do", "In Progress / Start Investigation")])
+    dev2 = mkraw("R1-2", "Development / In Design", "In Progress", assignee="Sam Lee",
+                 events=[(0, "Sam Lee", "status", "To Do", "Development / In Design")])
+    qa1 = mkraw("R1-3", "In QA Testing (QA Env)", "In Progress", assignee="Sam Lee",
+                events=[(0, "Sam Lee", "status", "Ready for QA (QA Env)", "In QA Testing (QA Env)")])
+    v = fq.multiple_active(dr.load_dev_issues([dev1, dev2, qa1]))
+    lanes = {r["lane"]: r["count"] for r in v}
+    check("Rule 1: two in dev lane flagged", lanes.get("dev") == 2)
+    check("Rule 1: single QA ticket not a violation", "qa" not in lanes)
+    # two in the QA lane -> violation
+    qa2 = mkraw("R1-4", "In Staging Testing", "In Progress", assignee="Sam Lee",
+                events=[(0, "Sam Lee", "status", "Passed QA (Staging Ready)", "In Staging Testing")])
+    qa3 = mkraw("R1-5", "In Staging Testing", "In Progress", assignee="Sam Lee",
+                events=[(0, "Sam Lee", "status", "Passed QA (Staging Ready)", "In Staging Testing")])
+    v2 = fq.multiple_active(dr.load_dev_issues([qa2, qa3]))
+    check("Rule 1: two in staging lane flagged", v2 and v2[0]["lane"] == "staging" and v2[0]["count"] == 2)
+
+    # Rule 3: pause active ticket at EOD. Carried overnight -> fail + attention.
+    overnight = mkraw("R3-1", "Development / In Design", "In Progress", fix_versions=["R1"],
+                      duedate="2026-08-01", worklogs=[(0, "Jane Doe", 3600, "x")],
+                      comments=[(0, 0, "Jane Doe", "wip")],
+                      events=[(2, "Jane Doe", "status", "To Do", "Development / In Design")])
+    i = dr.load_dev_issues([overnight])[0]
+    row = checklist.evaluate_ticket(i, now.date(), now=now)
+    eod = dict((c[0], c[2]) for c in row["checks"])
+    check("Rule 3: left active overnight fails", eod["eod_pause"] == "fail")
+    d = attention.board(dr.load_dev_issues([overnight]), now=now)
+    kinds = {r["kind"] for row in d["rows"] for r in row["reasons"]}
+    check("Rule 3: not-paused attention reason", "not_paused" in kinds)
+    # entered its active status today -> reminder (na), no attention reason
+    today_active = mkraw("R3-2", "Development / In Design", "In Progress", fix_versions=["R1"],
+                         duedate="2026-08-01", worklogs=[(0, "Jane Doe", 3600, "x")],
+                         comments=[(0, 0, "Jane Doe", "wip")],
+                         events=[(0, "Jane Doe", "status", "Pause Development / Design", "Development / In Design")])
+    row2 = checklist.evaluate_ticket(dr.load_dev_issues([today_active])[0], now.date(), now=now)
+    check("Rule 3: active-today is a reminder not a fail",
+          dict((c[0], c[2]) for c in row2["checks"])["eod_pause"] == "na")
+
+    # Rule 5: belongs to a release.
+    no_rel = mkraw("R5-1", "Development / In Design", "In Progress", duedate="2026-08-01",
+                   worklogs=[(0, "Jane Doe", 3600, "x")], comments=[(0, 0, "Jane Doe", "wip")],
+                   events=[(0, "Jane Doe", "status", "To Do", "Development / In Design")])
+    with_rel = mkraw("R5-2", "Development / In Design", "In Progress", fix_versions=["Web 0.12.0"],
+                     duedate="2026-08-01", worklogs=[(0, "Jane Doe", 3600, "x")],
+                     comments=[(0, 0, "Jane Doe", "wip")],
+                     events=[(0, "Jane Doe", "status", "To Do", "Development / In Design")])
+    r_no = checklist.evaluate_ticket(dr.load_dev_issues([no_rel])[0], now.date(), now=now)
+    r_yes = checklist.evaluate_ticket(dr.load_dev_issues([with_rel])[0], now.date(), now=now)
+    check("Rule 5: no release fails", dict((c[0], c[2]) for c in r_no["checks"])["has_release"] == "fail")
+    check("Rule 5: has release passes", dict((c[0], c[2]) for c in r_yes["checks"])["has_release"] == "pass")
+    dboard = attention.board(dr.load_dev_issues([no_rel]), now=now)
+    check("Rule 5: no-release attention reason",
+          any(r["kind"] == "no_release" for row in dboard["rows"] for r in row["reasons"]))
+
+    # Rules 4 & 6: gates on -> worklog/due checks are live (not n-a)
+    r4 = dict((c[0], c[2]) for c in r_yes["checks"])
+    check("Rule 4: worklog check active when gated on", r4["worklog_today"] in ("pass", "fail"))
+    check("Rule 6: due-date check active when gated on", r4["due_date"] in ("pass", "fail"))
+
+    # Rule 7: apply_workflow re-applies mapping to an existing store
+    s2 = st.load()
+    s2["status_buckets"] = {}
+    st.apply_workflow(s2)
+    check("Rule 7: load-workflow remaps statuses",
+          s2["status_buckets"].get("In Production Testing") == "qa_stage"
+          and st.lane_of("In Production Testing") == "production")
 
 
 def test_routes():
