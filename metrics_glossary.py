@@ -12,7 +12,15 @@ GLOSSARY = {
     "dev_to_qa": "First transition into active development → first transition into the QA stage.",
     "median": "Middle value — half the tickets are faster, half slower. Robust to one 28-day outlier.",
     "p85": "85th percentile — 85% of tickets finish within this time. The 'bad week' bound.",
-    "eod_signal": "A comment, worklog, or any tracked update on the ticket that day.",
+    "active_status": "A ticket in one of the five 'active work' statuses — In Progress / "
+                     "Start Investigation, Development / In Design, In QA Testing, In Staging "
+                     "Testing, In Production Testing. It means someone is CURRENTLY working on "
+                     "it. One per lane at a time; move it to its pause status at end of day.",
+    "in_flight": "A developer's open, assigned work: a ticket in an active, paused, QA-pipeline, "
+                 "or reopened status. NOT To Do (not started) and NOT Done. Broader than "
+                 "'active' — an in-flight ticket may be paused or waiting, not being worked right now.",
+    "eod_signal": "Evidence a ticket was touched that day — a comment, worklog, status change, "
+                  "or any tracked update. Measured across tickets in an active or paused status.",
     "silent": "No activity-feed event (transition, comment, worklog, field change) in N days "
               "while the ticket sits in an active development or rework status.",
     "aging": "Time in the current status exceeds that status's configured threshold.",

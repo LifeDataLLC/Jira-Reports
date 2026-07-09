@@ -379,25 +379,26 @@ def settings_screen():
 
 MYDAY_TMPL = """
 <h1>My Day</h1>
-<div class="sub">Per-ticket end-of-day checklist — fix the red items before ending the day · <a href="/my-day/rollup?{{ request.query_string.decode() }}">admin roll-up</a> · <a href="/my-day/feed?{{ request.query_string.decode() }}">activity feed</a></div>
+<div class="sub">End-of-day checklist for your {{ g('in_flight','in-flight tickets')|safe }} — your open, assigned work. Fix the red items before signing off · <a href="/my-day/rollup?{{ request.query_string.decode() }}">admin roll-up</a> · <a href="/my-day/feed?{{ request.query_string.decode() }}">activity feed</a></div>
 """ + FILTER_BAR.replace("{{ extra_filters|default('')|safe }}",
   """<label>Day<input type="date" name="day" value="{{ request.args.get('day','') }}"></label>""") + """
 {% if not request.args.get('developer') %}
 <div class="sectionbox"><b>Pick your name</b> to see your checklist:
   {% for dev in developers %}<a class="pill" style="margin:3px" href="?developer={{ dev|urlencode }}{{ day_qs }}">{{ dev }}</a>{% endfor %}
-  {% if not developers %}<span class="muted">No active tickets found.</span>{% endif %}
+  {% if not developers %}<span class="muted">No in-flight tickets found.</span>{% endif %}
 </div>
 {% endif %}
 {% if d %}
 <div class="cards">
-  <div class="card"><div class="n">{{ d.rows|length }}</div><div class="l">Tickets to review</div></div>
+  <div class="card"><div class="n">{{ d.rows|length }}</div><div class="l">In-flight tickets to review</div></div>
   <div class="card"><div class="n" style="color:{{ '#bf2600' if d.total_fails else '#006644' }}">{{ d.total_fails }}</div><div class="l">Open items</div></div>
 </div>
+<p class="muted"><span class="pill ok">⚡ active</span> = you're currently working on it (an active status). One active ticket per lane at a time; move it to its pause status at end of day. Paused / QA-queue tickets are shown too so you can confirm each is where it should be.</p>
 {% for r in d.rows %}
 <div class="sectionbox" style="padding:12px 16px">
   <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">
     <div><a href="{{ r.issue.url }}" target="_blank"><b>{{ r.issue.key }}</b></a> {{ r.issue.summary }}</div>
-    <div><span class="pill">{{ r.issue.type }}</span> <span class="pill">{{ r.issue.status }}</span></div>
+    <div>{% if r.active %}<span class="pill ok" title="Active status — currently being worked">⚡ active</span> {% endif %}<span class="pill">{{ r.issue.type }}</span> <span class="pill">{{ r.issue.status }}</span></div>
   </div>
   <div style="margin-top:8px">
   {% for cid, label, state, why in r.checks %}
@@ -405,22 +406,23 @@ MYDAY_TMPL = """
   {% endfor %}
   </div>
 </div>
-{% else %}<p class="muted">Nothing on the checklist — no active tickets for this developer.</p>{% endfor %}
+{% else %}<p class="muted">Nothing on the checklist — no in-flight tickets for this developer.</p>{% endfor %}
 {% endif %}
 """
 
 
 @v3.route("/my-day")
 def my_day_screen():
+    from metrics_glossary import gloss
     project, developer, _s, _e = parse_filters()
     day = _day_arg()
     issues = _issues(project)
     devs = sorted({i.assignee for i in issues
-                   if st.bucket_of(i.status, i.category) in ("active_dev", "rework")
+                   if st.bucket_of(i.status, i.category) in ("active_dev", "rework", "qa_stage", "paused")
                    and i.assignee != "Unassigned"})
     d = checklist.my_day(issues, developer, day, dr._dev_match) if developer else None
     day_qs = f"&day={request.args.get('day')}" if request.args.get("day") else ""
-    return page(MYDAY_TMPL, active="/my-day", d=d, developers=devs, day_qs=day_qs)
+    return page(MYDAY_TMPL, active="/my-day", d=d, developers=devs, day_qs=day_qs, g=gloss)
 
 
 def _day_arg():
@@ -432,28 +434,30 @@ def _day_arg():
 
 ROLLUP_TMPL = """
 <h1>End-of-day roll-up</h1>
-<div class="sub">% of active tickets with an EOD signal (comment, worklog, or any update) on {{ d.day }} · <a href="/my-day">back to My Day</a></div>
+<div class="sub">% of tickets in an active or paused status with an EOD signal (comment, worklog, or any update) on {{ d.day }} · <a href="/my-day">back to My Day</a></div>
 """ + FILTER_BAR.replace("{{ extra_filters|default('')|safe }}",
   """<label>Day<input type="date" name="day" value="{{ request.args.get('day','') }}"></label>""") + """
 <div class="cards">
-  <div class="card"><div class="n">{{ d.pct }}%</div><div class="l">Tickets with EOD signal ({{ d.signaled }}/{{ d.total }})</div></div>
+  <div class="card"><div class="n">{{ d.pct }}%</div><div class="l">In active/paused status with an EOD signal ({{ d.signaled }}/{{ d.total }})</div></div>
 </div>
+<p class="muted"><b>Active</b> = currently in one of the 5 working statuses (In Progress, Development, or a testing lane) — someone is working on it now. Paused counts because pausing at end of day is itself the signal. Queue statuses (To Do, Ready for QA, …) are excluded.</p>
 <table>
-<tr><th>Developer</th><th>Active tickets</th><th>With EOD signal</th><th>%</th></tr>
+<tr><th>Developer</th><th>In active/paused status</th><th>With EOD signal</th><th>%</th></tr>
 {% for r in d.rows %}
 <tr><td>{{ r.developer }}</td><td>{{ r.tickets }}</td><td>{{ r.signaled }}</td>
 <td><span class="pill {{ 'ok' if r.pct >= 80 else ('warn' if r.pct >= 50 else 'bad') }}">{{ r.pct }}%</span></td></tr>
-{% else %}<tr><td colspan="4" class="muted">No active tickets.</td></tr>{% endfor %}
+{% else %}<tr><td colspan="4" class="muted">No tickets in an active or paused status.</td></tr>{% endfor %}
 </table>
 """
 
 
 @v3.route("/my-day/rollup")
 def my_day_rollup():
+    from metrics_glossary import gloss
     project, _dev, _s, _e = parse_filters()
     day = _day_arg()
     d = checklist.rollup(_issues(project), day)
-    return page(ROLLUP_TMPL, active="/my-day", d=d)
+    return page(ROLLUP_TMPL, active="/my-day", d=d, g=gloss)
 
 
 FEED_TMPL = """
@@ -603,7 +607,7 @@ tickets missing dates, the due-date slip table (original vs current, pushes, sli
 reschedule counts. The Jira-side prerequisites are documented in <code>docs/jira_process_setup.md</code>.</p></div>
 {% else %}
 {% if h.missing %}
-<h2 style="font-size:14px">Active tickets missing dates</h2>
+<h2 style="font-size:14px">In-flight tickets missing dates</h2>
 <table><tr><th>Issue</th><th>Summary</th><th>Developer</th><th>Status</th><th>Missing</th></tr>
 {% for r in h.missing %}
 <tr><td><a href="{{ r.issue.url }}" target="_blank">{{ r.issue.key }}</a></td><td>{{ r.issue.summary }}</td>
@@ -628,12 +632,12 @@ reschedule counts. The Jira-side prerequisites are documented in <code>docs/jira
 {% else %}<tr><td colspan="5" class="muted">No start-date reschedules recorded.</td></tr>{% endfor %}</table>
 {% endif %}
 {% if est_on %}
-<h2 style="font-size:14px">Active tickets without an estimate</h2>
+<h2 style="font-size:14px">In-flight tickets without an estimate</h2>
 <table><tr><th>Issue</th><th>Summary</th><th>Developer</th><th>Status</th></tr>
 {% for r in h.no_estimate %}
 <tr><td><a href="{{ r.issue.url }}" target="_blank">{{ r.issue.key }}</a></td><td>{{ r.issue.summary }}</td>
 <td>{{ r.issue.assignee }}</td><td>{{ r.issue.status }}</td></tr>
-{% else %}<tr><td colspan="4" class="muted">Every active ticket has an estimate.</td></tr>{% endfor %}</table>
+{% else %}<tr><td colspan="4" class="muted">Every in-flight ticket has an estimate.</td></tr>{% endfor %}</table>
 {% endif %}
 {% endif %}
 
@@ -1079,7 +1083,7 @@ aggregates in SQLite; week-over-week deltas appear after the first week.</p></di
 <div class="cards">
   <div class="card"><div class="n">{{ dist.aging }}</div><div class="l">tickets over their aging threshold</div></div>
   <div class="card"><div class="n">{{ dist.silent }}</div><div class="l">tickets silent beyond the limit</div></div>
-  <div class="card"><div class="n">{{ dist.multi }}</div><div class="l">developers holding >1 active ticket</div></div>
+  <div class="card"><div class="n">{{ dist.multi }}</div><div class="l">developers with >1 ticket in an active status (same lane)</div></div>
 </div>
 {% endif %}
 """
@@ -1099,7 +1103,7 @@ def trends_screen():
         good = (delta or 0) <= 0 if invert else (delta or 0) >= 0
         return {"label": label, "value": value, "delta": delta, "good": good}
     metrics = [
-        metric("eod_signal_pct", "Active tickets with EOD signal",
+        metric("eod_signal_pct", "Active/paused tickets with EOD signal",
                f"{agg['eod_signal_pct']}% of {agg['eod_total']}"),
         metric("cycle_median_h", "Median cycle time (30d)",
                f"{agg['cycle_median_h'] or '—'}h (n={agg['cycle_n']})", invert=True),

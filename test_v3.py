@@ -480,6 +480,25 @@ def test_dev_team_rules():
           and st.lane_of("In Production Testing") == "production")
 
 
+def test_rollup_terminology():
+    """Roll-up counts tickets in an ACTIVE or PAUSED status — active includes the
+    testing lanes; queue states (Ready for QA) are excluded."""
+    import checklist
+    import dev_reports as dr
+    s = st.load(); st.apply_workflow(s); st.save(s)  # ensure workflow mapping
+    qa_active = mkraw("T-1", "In QA Testing (QA Env)", "In Progress", assignee="QA Bob",
+                      comments=[(0, 0, "QA Bob", "testing")],
+                      events=[(0, "QA Bob", "status", "Ready for QA (QA Env)", "In QA Testing (QA Env)")])
+    queue = mkraw("T-2", "Ready for QA (QA Env)", "In Progress", assignee="QA Bob",
+                  events=[(1, "Jane Doe", "status", "Development / In Design", "Ready for QA (QA Env)")])
+    paused = mkraw("T-3", "Pause Development / Design", "In Progress", assignee="Jane Doe",
+                   events=[(0, "Jane Doe", "status", "Development / In Design", "Pause Development / Design")])
+    r = checklist.rollup(dr.load_dev_issues([qa_active, queue, paused]), now.date(), now=now)
+    check("active testing lane counted in roll-up", r["total"] == 2)  # T-1 active + T-3 paused
+    check("queue (Ready for QA) excluded from roll-up", r["total"] == 2)
+    check("active QA ticket signaled", r["signaled"] >= 1)
+
+
 def test_routes():
     import app
     import jira_client as jc

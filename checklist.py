@@ -150,18 +150,21 @@ def evaluate_ticket(issue, day: dt.date, now=None) -> dict:
 
     eod_signal = bool(today_events)
     return {"issue": issue, "bucket": bucket, "checks": checks,
+            "active": st.is_active_status(issue.status),
             "fails": sum(1 for _c, _l, state, _w in checks if state == "fail"),
             "eod_signal": eod_signal}
 
 
 def my_day(issues, developer, day: dt.date, match, now=None) -> dict:
-    """Checklist rows for one developer's tickets (active_dev/rework + owned qa_stage)."""
+    """Checklist rows for one developer's IN-FLIGHT tickets — their open, assigned
+    work: anything in an active status (currently working), paused, in the QA
+    pipeline, or reopened. To Do and Done are excluded."""
     rows = []
     for i in issues:
         b = st.bucket_of(i.status, i.category)
         # Unmapped statuses in Jira's own In Progress category still appear so the
         # developer sees the "status classified" failure (never silently dropped).
-        if b not in ("active_dev", "rework", "qa_stage") and not (
+        if b not in ("active_dev", "rework", "qa_stage", "paused") and not (
                 b is None and i.category == "In Progress"):
             continue
         if developer and match and not match(developer, i.assignee, i.assignee_id):
@@ -173,11 +176,15 @@ def my_day(issues, developer, day: dt.date, match, now=None) -> dict:
 
 
 def rollup(issues, day: dt.date, now=None) -> dict:
-    """Admin roll-up (FR-M4): % of active tickets with an EOD signal on `day`,
-    per developer and overall."""
+    """Admin roll-up (FR-M4): % of tickets in an ACTIVE or PAUSED status with an
+    EOD signal on `day`, per developer and overall. Active = one of the 5 blue
+    "currently working" statuses; paused counts because pausing at end of day is
+    itself the signal. Queue states (To Do, Ready for QA, etc.) are excluded —
+    nobody is actively working them."""
     per_dev, total, signaled = {}, 0, 0
     for i in issues:
-        if st.bucket_of(i.status, i.category) not in ("active_dev", "rework"):
+        if not (st.is_active_status(i.status)
+                or st.bucket_of(i.status, i.category) == "paused"):
             continue
         r = evaluate_ticket(i, day, now)
         d = per_dev.setdefault(i.assignee, {"tickets": 0, "signaled": 0})

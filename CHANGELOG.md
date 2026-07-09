@@ -109,3 +109,14 @@
   release" check + Attention "No release" reason.
 - Rules 4 & 6 (worklog + due date) enabled by the workflow; Rule 2 already via
   Silent/Aging; Rule 7 via Settings. docs/dev_team_rules_mapping.md added.
+
+### Terminology: "active" vs "in-flight"
+- Reserved "active status / in progress / actively working" for the 5 blue
+  statuses only (is_active_status) = currently being worked, one per lane.
+- "in-flight" = a developer's open assigned work (active, paused, QA, or
+  reopened) — used where the broad set is meant, never called "active".
+- Roll-up now measures % of tickets in an ACTIVE or PAUSED status with an EOD
+  signal (active includes testing lanes; queue states excluded), relabeled
+  accordingly. My Day lists in-flight tickets and marks each active one with an
+  "⚡ active" chip. Planning/Trends labels de-ambiguated. Glossary defines
+  active_status / in_flight / eod_signal.
