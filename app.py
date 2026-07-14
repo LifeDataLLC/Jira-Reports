@@ -42,6 +42,31 @@ app.register_blueprint(reports_web.bp)
 # v3 screens: Settings, My Day, Attention, QA, Flow, Quality, Planning, Investigator.
 import screens_web
 app.register_blueprint(screens_web.v3)
+# Authentication: login/register/logout + admin user management.
+import auth
+import auth_web
+app.secret_key = auth.secret_key()
+app.permanent_session_lifetime = __import__("datetime").timedelta(days=14)
+app.register_blueprint(auth_web.authbp)
+
+# Paths reachable without a login (the scheduled snapshot job hits /tasks/snapshot).
+_PUBLIC_PREFIXES = ("/login", "/register", "/logout", "/tasks/snapshot", "/static", "/favicon")
+# Admin-only areas (Settings + admin tools + the cross-team compliance views).
+_ADMIN_PREFIXES = ("/settings", "/admin", "/my-day/rollup", "/my-day/feed")
+
+
+@app.before_request
+def _require_login():
+    from urllib.parse import quote
+    path = request.path
+    if path.startswith(_PUBLIC_PREFIXES):
+        return
+    user = auth.current_user()
+    if not user:
+        return redirect("/login?next=" + quote(request.full_path))
+    if path.startswith(_ADMIN_PREFIXES) and user.get("role") != "admin":
+        return ("<p style='font-family:sans-serif;margin:40px'>Admin only. "
+                "<a href='/my-day'>Go to My Day</a> · <a href='/logout'>Log out</a></p>", 403)
 
 # ---------------------------------------------------------------------------
 # v3 migration: deprecated routes 301 to their replacement screens and log hits

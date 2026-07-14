@@ -127,11 +127,20 @@ def unmapped_banner():
 
 
 def page(body, active="", show_banner=True, **ctx):
+    import auth
+    user = auth.current_user()
+    admin = bool(user and user.get("role") == "admin")
+    items = [(h, l) for h, l in NAV if not (h in ("/settings",) and not admin)]
     navlinks = "".join(
         f'<a href="{href}" class="{"active" if href == active else ""}">{label}</a>'
-        for href, label in NAV)
+        for href, label in items)
+    if admin:
+        navlinks += '<a href="/admin/users">Users</a>'
+    if user:
+        navlinks += (f'<span style="margin-left:auto;color:#b3d0ff;font-size:12px">'
+                     f'{user["email"]} ({user["role"]}) · <a href="/logout" style="color:#fff">Log out</a></span>')
     chrome = CHROME_TOP.replace("{NAVLINKS}", navlinks) + _overlay()
-    banner = unmapped_banner() if show_banner else ""
+    banner = unmapped_banner() if (show_banner and admin) else ""
     fresh = dt.datetime.now().strftime("%H:%M")
     shell = (chrome + '<div class="wrap">'
              + f'<div class="fresh">data as of {fresh} · cached ~5 min</div>'
@@ -278,6 +287,14 @@ SETTINGS_TMPL = """
       {% for r in ['developer','lead','exec'] %}<option value="{{ r }}" {% if s.default_role==r %}selected{% endif %}>{{ r }}</option>{% endfor %}
     </select></label>
 </div>
+<div class="sectionbox">
+  <h2 style="margin-top:0">Developer dropdown</h2>
+  <p class="muted">Check a developer to <b>hide</b> them from the My Day dropdown — e.g. past employees who still appear on old tickets.</p>
+  {% for dvp in developers %}
+  <label style="display:inline-block;font-size:13px;margin:3px 16px 3px 0">
+    <input type="checkbox" name="hide_dev" value="{{ dvp.id }}" {% if dvp.id in hidden or dvp.name in hidden %}checked{% endif %}> Hide {{ dvp.name }}</label>
+  {% else %}<span class="muted">No developers found in the synced data yet.</span>{% endfor %}
+</div>
 <button class="btn" type="submit">Save settings</button>
 </form>
 """
@@ -315,6 +332,7 @@ def settings_screen():
     s = st.load()
     saved = False
     if request.method == "POST" and request.form.get("load_workflow"):
+        import auth
         st.apply_workflow(s)
         st.save(s)
         return page(SETTINGS_TMPL, active="/settings", show_banner=False, s=s, saved=True,
@@ -322,7 +340,8 @@ def settings_screen():
                     mapping=s["status_buckets"], thresholds=s["status_thresholds"],
                     buckets=st.BUCKETS, bucket_labels=st.BUCKET_LABELS,
                     bucket_default=lambda status: (s["bucket_thresholds"].get(s["status_buckets"].get(status)) or "—"),
-                    gate_labels=GATE_LABELS, check_labels=CHECK_LABELS)
+                    gate_labels=GATE_LABELS, check_labels=CHECK_LABELS,
+                    developers=auth.all_developers(), hidden=set(s.get("hidden_developers", [])))
     if request.method == "POST":
         form = request.form
         s["status_buckets"] = {}
@@ -356,6 +375,7 @@ def settings_screen():
         s["teams_webhook_url"] = (form.get("teams_webhook_url") or "").strip()
         if form.get("default_role") in ("developer", "lead", "exec"):
             s["default_role"] = form["default_role"]
+        s["hidden_developers"] = form.getlist("hide_dev")
         st.save(s)
         saved = True
     statuses = _statuses_seen()
@@ -366,11 +386,13 @@ def settings_screen():
         v = s["bucket_thresholds"].get(b) if b else None
         return v if v is not None else "—"
 
+    import auth
     return page(SETTINGS_TMPL, active="/settings", show_banner=False, s=s, saved=saved,
                 statuses=statuses, unmapped=unmapped, mapping=s["status_buckets"],
                 thresholds=s["status_thresholds"], buckets=st.BUCKETS,
                 bucket_labels=st.BUCKET_LABELS, bucket_default=bucket_default,
-                gate_labels=GATE_LABELS, check_labels=CHECK_LABELS)
+                gate_labels=GATE_LABELS, check_labels=CHECK_LABELS,
+                developers=auth.all_developers(), hidden=set(s.get("hidden_developers", [])))
 
 
 # ---------------------------------------------------------------------------
@@ -379,14 +401,17 @@ def settings_screen():
 
 MYDAY_TMPL = """
 <h1>My Day</h1>
-<div class="sub">End-of-day checklist for your {{ g('in_flight','in-flight tickets')|safe }} — your open, assigned work. Fix the red items before signing off · <a href="/my-day/rollup?{{ request.query_string.decode() }}">admin roll-up</a> · <a href="/my-day/feed?{{ request.query_string.decode() }}">activity feed</a></div>
-""" + FILTER_BAR.replace("{{ extra_filters|default('')|safe }}",
-  """<label>Day<input type="date" name="day" value="{{ request.args.get('day','') }}"></label>""") + """
-{% if not request.args.get('developer') %}
-<div class="sectionbox"><b>Pick your name</b> to see your checklist:
-  {% for dev in developers %}<a class="pill" style="margin:3px" href="?developer={{ dev|urlencode }}{{ day_qs }}">{{ dev }}</a>{% endfor %}
-  {% if not developers %}<span class="muted">No in-flight tickets found.</span>{% endif %}
-</div>
+<div class="sub">End-of-day checklist for your {{ g('in_flight','in-flight tickets')|safe }} — your open, assigned work. Fix the red items before signing off{% if is_admin %} · <a href="/my-day/rollup?{{ request.query_string.decode() }}">admin roll-up</a> · <a href="/my-day/feed?{{ request.query_string.decode() }}">activity feed</a>{% endif %}</div>
+<form method="get" class="filterbar">
+  <label>Developer<select name="developer" {% if not is_admin %}{% if dev_options|length <= 1 %}disabled{% endif %}{% endif %} onchange="this.form.submit()">
+    {% if is_admin %}<option value="">— select a developer —</option>{% endif %}
+    {% for o in dev_options %}<option value="{{ o.id }}" {% if o.id == selected_dev %}selected{% endif %}>{{ o.name }}</option>{% endfor %}
+  </select></label>
+  <label>Day<input type="date" name="day" value="{{ request.args.get('day','') }}" onchange="this.form.submit()"></label>
+  <noscript><button class="btn" type="submit">Apply</button></noscript>
+</form>
+{% if not selected_dev %}
+<div class="sectionbox"><p class="muted">{% if is_admin %}Select a developer above to see their checklist.{% else %}Your account isn't linked to a developer, so there's nothing to show. Ask an admin to link it.{% endif %}</p></div>
 {% endif %}
 {% if d %}
 <p class="muted"><span class="pill ok">⚡ active</span> = you're currently working on it (an active status). One active ticket per lane at a time; move it to its pause status at end of day. Paused / QA-queue tickets are shown too so you can confirm each is where it should be.</p>
@@ -409,16 +434,27 @@ MYDAY_TMPL = """
 
 @v3.route("/my-day")
 def my_day_screen():
+    import auth
     from metrics_glossary import gloss
-    project, developer, _s, _e = parse_filters()
+    user = auth.current_user()
+    is_admin = bool(user and user.get("role") == "admin")
+    own = (user or {}).get("developer_id") or (user or {}).get("developer")
+    own_name = (user or {}).get("developer") or own
+    if is_admin:
+        dev_options = auth.visible_developers()
+        if own and not any(o["id"] == own for o in dev_options):
+            dev_options = [{"id": own, "name": own_name}] + dev_options
+        selected_dev = (request.args.get("developer") or "").strip() \
+            if "developer" in request.args else (own or "")
+    else:
+        # Employees are locked to their linked developer, regardless of the URL.
+        dev_options = [{"id": own, "name": own_name}] if own else []
+        selected_dev = own or ""
     day = _day_arg()
-    issues = _issues(project)
-    devs = sorted({i.assignee for i in issues
-                   if st.bucket_of(i.status, i.category) in ("active_dev", "rework", "qa_stage", "paused")
-                   and i.assignee != "Unassigned"})
-    d = checklist.my_day(issues, developer, day, dr._dev_match) if developer else None
-    day_qs = f"&day={request.args.get('day')}" if request.args.get("day") else ""
-    return page(MYDAY_TMPL, active="/my-day", d=d, developers=devs, day_qs=day_qs, g=gloss)
+    d = (checklist.my_day(_issues(None), selected_dev, day, dr._dev_match)
+         if selected_dev else None)
+    return page(MYDAY_TMPL, active="/my-day", d=d, g=gloss,
+                is_admin=is_admin, dev_options=dev_options, selected_dev=selected_dev)
 
 
 def _day_arg():

@@ -26,6 +26,16 @@ def check(name, cond):
     PASSED += 1
 
 
+def login_admin(c):
+    """Log a test client in as an admin (registers the first account if needed)."""
+    import auth
+    if auth.user_count() == 0:
+        c.post("/register", data={"email": "boss@lifedatacorp.com", "password": "secret123"})
+    else:
+        c.post("/login", data={"email": "boss@lifedatacorp.com", "password": "secret123"})
+    return c
+
+
 # ---------------------------------------------------------------------------
 # Phase 0 — settings store
 # ---------------------------------------------------------------------------
@@ -252,7 +262,7 @@ def test_investigator_gaps():
         (2, "Jane Doe", "status", "Development / In Design", "Development / In Design")])
     jc.fetch_dev_dataset = lambda project=None, lookback_days=None: [raw]
     jc.detect_custom_fields = lambda: {"story_points": None, "sprint": None, "start_date": None}
-    c = app.app.test_client()
+    c = login_admin(app.app.test_client())
     h = c.get("/investigate?key=g-1").get_data(as_text=True)
     check("investigator resolves key case-insensitively", "G-1" in h)
     check("gap spacer rendered", "days — no activity" in h)
@@ -499,15 +509,60 @@ def test_rollup_terminology():
     check("active QA ticket signaled", r["signaled"] >= 1)
 
 
+def test_auth():
+    import app
+    import auth
+    import jira_client as jc
+    jc.fetch_dev_dataset = lambda project=None, lookback_days=None: [
+        {"fields": {"assignee": {"displayName": "Dev One", "accountId": "d1"},
+                    "status": {"name": "To Do", "statusCategory": {"name": "To Do"}}}}]
+    jc.detect_custom_fields = lambda: {"story_points": None, "sprint": None, "start_date": None}
+    c = app.app.test_client()
+    # unauthenticated -> redirect to login
+    check("guard redirects to login", c.get("/attention").status_code == 302)
+    check("snapshot endpoint stays public", c.post("/tasks/snapshot").status_code in (200, 500))
+    # first account is admin
+    c.post("/register", data={"email": "boss@lifedatacorp.com", "password": "secret123"})
+    check("first user is admin", auth.get_user("boss@lifedatacorp.com")["role"] == "admin")
+    check("admin reaches settings", c.get("/settings").status_code == 200)
+    # employee self-register + permanent link
+    ce = app.app.test_client()
+    check("register warns permanent", "permanently linked" in ce.get("/register").get_data(as_text=True))
+    ce.post("/register", data={"email": "d1@lifedatacorp.com", "password": "secret123",
+                               "developer_id": "d1", "developer_name": "Dev One"})
+    check("employee linked to dev", auth.get_user("d1@lifedatacorp.com")["developer_id"] == "d1")
+    check("employee blocked from settings", ce.get("/settings").status_code == 403)
+    check("employee blocked from rollup", ce.get("/my-day/rollup").status_code == 403)
+    # duplicate dev + short password rejected
+    check("dup dev rejected", "already linked" in app.app.test_client().post(
+        "/register", data={"email": "x@lifedatacorp.com", "password": "secret123",
+                           "developer_id": "d1", "developer_name": "Dev One"}).get_data(as_text=True))
+    check("short password rejected", "at least 8" in app.app.test_client().post(
+        "/register", data={"email": "y@lifedatacorp.com", "password": "abc",
+                           "developer_id": "d1"}).get_data(as_text=True))
+    # login / bad login
+    cx = app.app.test_client()
+    check("bad login fails", "Incorrect" in cx.post(
+        "/login", data={"email": "boss@lifedatacorp.com", "password": "nope"}).get_data(as_text=True))
+    check("good login redirects", cx.post(
+        "/login", data={"email": "boss@lifedatacorp.com", "password": "secret123"}).status_code == 302)
+
+
 def test_routes():
     import app
+    import auth
     import jira_client as jc
     jc.fetch_dev_dataset = lambda project=None, lookback_days=None: []
     jc.detect_custom_fields = lambda: {"story_points": None, "sprint": None, "start_date": None}
     jc.fetch_issues_by_time = lambda clause: []
     jc.fetch_working_set = lambda days=None: []
     jc.fetch_project_versions = lambda: []
+    # log in as admin so the guard lets route smoke-tests through
     c = app.app.test_client()
+    if auth.user_count() == 0:
+        c.post("/register", data={"email": "smoke@lifedatacorp.com", "password": "secret123"})
+    else:
+        c.post("/login", data={"email": "boss@lifedatacorp.com", "password": "secret123"})
     # redirects
     for old, new in [("/reports/daily", "/my-day/feed"), ("/reports/developers", "/qa"),
                      ("/dev-reports/timeline", "/investigate"), ("/dev-reports/bug-quality", "/quality")]:
@@ -535,6 +590,10 @@ def test_snapshots_and_trends():
     import digest as dg
     import jira_client as jc
     import snapshots as sn
+    try:  # isolate: other tests may have written a snapshot via /tasks/snapshot
+        os.remove(os.environ["SNAPSHOT_DB_PATH"])
+    except OSError:
+        pass
     raw = mkraw("S-1", "Development / In Design", "In Progress", events=[
         (3, "Jane Doe", "status", "To Do", "Development / In Design")],
         comments=[(0, 0, "Jane Doe", "daily update")])
@@ -555,7 +614,7 @@ def test_snapshots_and_trends():
 
     jc.fetch_dev_dataset = lambda project=None, lookback_days=None: [raw]
     jc.detect_custom_fields = lambda: {"story_points": None, "sprint": None, "start_date": None}
-    c = app.app.test_client()
+    c = login_admin(app.app.test_client())
     h = c.get("/exec").get_data(as_text=True)
     check("trends renders aggregates", "EOD signal" in h and "Meeting Mode" in h)
     hm = c.get("/exec?meeting=1").get_data(as_text=True)

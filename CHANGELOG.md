@@ -120,3 +120,19 @@
   accordingly. My Day lists in-flight tickets and marks each active one with an
   "⚡ active" chip. Planning/Trends labels de-ambiguated. Glossary defines
   active_status / in_flight / eod_signal.
+
+### Login system (admin / employee) + My Day developer dropdown
+- auth.py / auth_web.py: email+password accounts, two roles. Passwords hashed
+  (pbkdf2), sessions via a persisted SECRET_KEY. First account created is the
+  admin; afterward employees self-register (picking their developer, warned the
+  link is permanent) and only admins create more admins (/admin/users).
+- Whole app requires login (before_request guard); Settings, /admin/*, and the
+  cross-team roll-up/feed are admin-only; /tasks/snapshot stays public for the
+  scheduler. Nav shows the signed-in user + logout and hides Settings/Users from
+  employees.
+- My Day: free-text developer replaced by a role-aware dropdown. Employees are
+  locked to their linked developer (even via URL); admins pick any visible
+  developer and default to themselves (blank if unlinked).
+- Settings: hide developers (e.g. past employees like Benjamin Pettus) from the
+  dropdown. data_dir() now follows APP_CONFIG_PATH so users/snapshots/secret
+  stay co-located (and on Azure default to the persistent /home/data).

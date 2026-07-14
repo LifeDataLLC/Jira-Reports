@@ -81,6 +81,9 @@ DEFAULTS = {
     "teams_webhook_url": "",
     # Role-based landing default: developer | lead | exec (FR-X4)
     "default_role": "lead",
+    # Developers (Jira assignees) to hide from the My Day dropdown — e.g. past
+    # employees. Stored by accountId or display name.
+    "hidden_developers": [],
 }
 
 def data_dir() -> str:
@@ -95,6 +98,11 @@ def data_dir() -> str:
     override = os.environ.get("APP_DATA_DIR")
     if override:
         return override
+    # Keep users/snapshots/secret next to the settings file when it's overridden
+    # (tests and custom deployments set APP_CONFIG_PATH).
+    cfg = os.environ.get("APP_CONFIG_PATH")
+    if cfg:
+        return os.path.dirname(cfg) or "."
     if os.environ.get("WEBSITE_SITE_NAME"):  # running on Azure App Service
         return "/home/data"
     return os.path.join(".", "data")
