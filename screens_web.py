@@ -389,10 +389,6 @@ MYDAY_TMPL = """
 </div>
 {% endif %}
 {% if d %}
-<div class="cards">
-  <div class="card"><div class="n">{{ d.rows|length }}</div><div class="l">In-flight tickets to review</div></div>
-  <div class="card"><div class="n" style="color:{{ '#bf2600' if d.total_fails else '#006644' }}">{{ d.total_fails }}</div><div class="l">Open items</div></div>
-</div>
 <p class="muted"><span class="pill ok">⚡ active</span> = you're currently working on it (an active status). One active ticket per lane at a time; move it to its pause status at end of day. Paused / QA-queue tickets are shown too so you can confirm each is where it should be.</p>
 {% for r in d.rows %}
 <div class="sectionbox" style="padding:12px 16px">
