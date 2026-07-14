@@ -136,3 +136,15 @@
 - Settings: hide developers (e.g. past employees like Benjamin Pettus) from the
   dropdown. data_dir() now follows APP_CONFIG_PATH so users/snapshots/secret
   stay co-located (and on Azure default to the persistent /home/data).
+
+### My Day trim + filters, terminology, project selection
+- My Day checklist reduced to five items: Status classified, Comment today,
+  Due date set, Belongs to a release, Within aging threshold. Removed Worklog
+  today, Start date OK, Paused for end of day, Handoff comment, Blocked reason
+  (the pause/blocked signals remain on the Attention Board).
+- My Day filter chips: "Show tickets failing …" narrows to tickets failing any
+  of the five checks (client-side).
+- Dropped the "in-flight" wording company-wide → "open tickets / open work".
+- Settings: "Projects shown in views" — pick the Support space, the V2 space,
+  or both (or any Jira project); jira_client.configured_projects() feeds every
+  fetch, and the cache clears when the selection changes.

@@ -156,10 +156,11 @@ def test_checklist():
     d = checklist.my_day(issues, "jane", today, dr._dev_match, now=now)
     rows = {r["issue"].key: r for r in d["rows"]}
     g = dict((c[0], c[2]) for c in rows["C-1"]["checks"])
-    check("handoff comment pass", g["handoff_comment"] == "pass")
     check("comment today pass", g["comment_today"] == "pass")
-    check("worklog gated -> na", g["worklog_today"] == "na")
     check("status mapped pass", g["status_mapped"] == "pass")
+    check("removed checks gone", "worklog_today" not in g and "handoff_comment" not in g
+          and "eod_pause" not in g and "start_date" not in g and "blocked_reason" not in g)
+    check("kept 5 checks", set(g) == {"status_mapped","comment_today","due_date","has_release","not_over_threshold"})
     b = dict((c[0], c[2]) for c in rows["C-2"]["checks"])
     check("unmapped status fails", b["status_mapped"] == "fail")
     check("no comment fails", b["comment_today"] == "fail")
@@ -444,21 +445,9 @@ def test_dev_team_rules():
                       duedate="2026-08-01", worklogs=[(0, "Jane Doe", 3600, "x")],
                       comments=[(0, 0, "Jane Doe", "wip")],
                       events=[(2, "Jane Doe", "status", "To Do", "Development / In Design")])
-    i = dr.load_dev_issues([overnight])[0]
-    row = checklist.evaluate_ticket(i, now.date(), now=now)
-    eod = dict((c[0], c[2]) for c in row["checks"])
-    check("Rule 3: left active overnight fails", eod["eod_pause"] == "fail")
     d = attention.board(dr.load_dev_issues([overnight]), now=now)
     kinds = {r["kind"] for row in d["rows"] for r in row["reasons"]}
-    check("Rule 3: not-paused attention reason", "not_paused" in kinds)
-    # entered its active status today -> reminder (na), no attention reason
-    today_active = mkraw("R3-2", "Development / In Design", "In Progress", fix_versions=["R1"],
-                         duedate="2026-08-01", worklogs=[(0, "Jane Doe", 3600, "x")],
-                         comments=[(0, 0, "Jane Doe", "wip")],
-                         events=[(0, "Jane Doe", "status", "Pause Development / Design", "Development / In Design")])
-    row2 = checklist.evaluate_ticket(dr.load_dev_issues([today_active])[0], now.date(), now=now)
-    check("Rule 3: active-today is a reminder not a fail",
-          dict((c[0], c[2]) for c in row2["checks"])["eod_pause"] == "na")
+    check("Rule 3: not-paused attention reason (left active overnight)", "not_paused" in kinds)
 
     # Rule 5: belongs to a release.
     no_rel = mkraw("R5-1", "Development / In Design", "In Progress", duedate="2026-08-01",
@@ -478,7 +467,6 @@ def test_dev_team_rules():
 
     # Rules 4 & 6: gates on -> worklog/due checks are live (not n-a)
     r4 = dict((c[0], c[2]) for c in r_yes["checks"])
-    check("Rule 4: worklog check active when gated on", r4["worklog_today"] in ("pass", "fail"))
     check("Rule 6: due-date check active when gated on", r4["due_date"] in ("pass", "fail"))
 
     # Rule 7: apply_workflow re-applies mapping to an existing store

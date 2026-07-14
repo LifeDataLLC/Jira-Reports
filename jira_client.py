@@ -36,6 +36,20 @@ JIRA_API_TOKEN = os.environ.get("JIRA_API_TOKEN", "")
 
 # Which project(s) to report on, and how far back "recent activity" looks.
 PROJECT_KEYS = os.environ.get("JIRA_PROJECTS", "LIFEDATAV2").split(",")
+
+
+def configured_projects() -> list:
+    """Project keys to query: admin selection from Settings if any, else the env
+    default (JIRA_PROJECTS). Lets admins switch between the Support space, the V2
+    space, or both without a deploy."""
+    try:
+        import settings as _st
+        sel = _st.load().get("projects")
+        if sel:
+            return sel
+    except Exception:
+        pass
+    return PROJECT_KEYS
 WINDOW_DAYS = int(os.environ.get("JIRA_WINDOW_DAYS", "14"))
 
 
@@ -157,7 +171,7 @@ def fetch_working_set(window_days: int | None = None) -> list[dict]:
     changelog. Reports are then computed in-memory from this single dataset.
     """
     window_days = window_days or WINDOW_DAYS
-    projects = " ,".join(f'"{p.strip()}"' for p in PROJECT_KEYS)
+    projects = " ,".join(f'"{p.strip()}"' for p in configured_projects())
     jql = (f'project in ({projects}) AND ('
            f'statusCategory != Done OR resolved >= -{window_days}d '
            f'OR updated >= -{window_days}d) ORDER BY updated DESC')
@@ -171,7 +185,7 @@ def fetch_issues_by_time(time_clause: str) -> list[dict]:
     'updated >= -7d' or 'updated >= "2026-06-01" AND updated <= "2026-06-10 23:59"'.
     Used by the per-ticket time-in-status report so any timeframe can be requested.
     """
-    projects = " ,".join(f'"{p.strip()}"' for p in PROJECT_KEYS)
+    projects = " ,".join(f'"{p.strip()}"' for p in configured_projects())
     jql = f'project in ({projects}) AND ({time_clause}) ORDER BY updated DESC'
     return search_issues(jql, REPORT_FIELDS, expand_changelog=True)
 
@@ -247,7 +261,7 @@ def fetch_dev_dataset(project: str | None = None, lookback_days: int | None = No
     if project:
         projects = f'"{project.strip()}"'
     else:
-        projects = " ,".join(f'"{p.strip()}"' for p in PROJECT_KEYS)
+        projects = " ,".join(f'"{p.strip()}"' for p in configured_projects())
     cf = detect_custom_fields()
     fields = ["summary", "status", "assignee", "reporter", "issuetype", "priority",
               "created", "updated", "resolutiondate", "duedate", "labels",
@@ -292,9 +306,33 @@ def fetch_single_issue(key: str) -> dict | None:
 
 
 @_cached
+def list_projects() -> list[dict]:
+    """All Jira projects visible to the token: [{key, name}] — for the Settings
+    project picker."""
+    out = []
+    try:
+        start = 0
+        while True:
+            r = requests.get(f"{JIRA_BASE_URL}/rest/api/3/project/search",
+                             params={"maxResults": 100, "startAt": start},
+                             auth=_auth(), headers={"Accept": "application/json"}, timeout=60)
+            if not r.ok:
+                break
+            data = r.json()
+            for pr in data.get("values", []):
+                out.append({"key": pr.get("key"), "name": pr.get("name")})
+            if data.get("isLast", True) or not data.get("values"):
+                break
+            start += len(data["values"])
+    except Exception:
+        pass
+    return sorted(out, key=lambda p: (p.get("name") or "").lower())
+
+
+@_cached
 def fetch_project_versions() -> list[dict]:
     out = []
-    for p in PROJECT_KEYS:
+    for p in configured_projects():
         url = f"{JIRA_BASE_URL}/rest/api/3/project/{p.strip()}/versions"
         resp = requests.get(url, auth=_auth(), headers={"Accept": "application/json"},
                             timeout=60)
@@ -305,7 +343,7 @@ def fetch_project_versions() -> list[dict]:
 
 @_cached
 def fetch_issues_for_version(version_name: str) -> list[dict]:
-    projects = " ,".join(f'"{p.strip()}"' for p in PROJECT_KEYS)
+    projects = " ,".join(f'"{p.strip()}"' for p in configured_projects())
     jql = f'project in ({projects}) AND fixVersion = "{version_name}"'
     return search_issues(jql, REPORT_FIELDS, expand_changelog=False)
 
@@ -512,7 +550,7 @@ def build_report(fetch_changelogs: bool = True) -> dict[str, DeveloperReport]:
     Pull completed + in-progress tickets for the configured projects and
     compute per-developer metrics. Returns {developer_name: DeveloperReport}.
     """
-    projects = " ,".join(f'"{p.strip()}"' for p in PROJECT_KEYS)
+    projects = " ,".join(f'"{p.strip()}"' for p in configured_projects())
     fields = ["summary", "status", "assignee", "issuetype", "created", "resolutiondate"]
 
     completed_raw = search_issues(

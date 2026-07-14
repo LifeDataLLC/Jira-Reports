@@ -59,10 +59,8 @@ DEFAULTS = {
               "sprints_enabled": False},
     # My Day checklist item toggles (FR-C3)
     "checklist_items": {"status_mapped": True, "comment_today": True,
-                        "worklog_today": True, "start_date": True,
-                        "due_date": True, "has_release": True, "eod_pause": True,
-                        "not_over_threshold": True,
-                        "handoff_comment": True, "blocked_reason": True},
+                        "due_date": True, "has_release": True,
+                        "not_over_threshold": True},
     # QA handoff: comment by transition author within this many hours before/at handoff
     "handoff_window_hours": 4,
     "test_keywords": ["test", "steps", "verify", "qa", "reproduce", "scenario"],
@@ -84,6 +82,9 @@ DEFAULTS = {
     # Developers (Jira assignees) to hide from the My Day dropdown — e.g. past
     # employees. Stored by accountId or display name.
     "hidden_developers": [],
+    # Jira project keys to include in all views. Empty = the JIRA_PROJECTS env
+    # default. Lets admins choose the Support space, the V2 space, or both.
+    "projects": [],
 }
 
 def data_dir() -> str:

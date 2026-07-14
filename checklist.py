@@ -16,21 +16,15 @@ import activity
 import analytics as A
 import settings as st
 
-CHECK_ORDER = ["status_mapped", "comment_today", "worklog_today", "due_date",
-               "has_release", "eod_pause", "not_over_threshold", "start_date",
-               "handoff_comment", "blocked_reason"]
+CHECK_ORDER = ["status_mapped", "comment_today", "due_date", "has_release",
+               "not_over_threshold"]
 
 CHECK_LABELS = {
     "status_mapped": "Status classified",
     "comment_today": "Comment today",
-    "worklog_today": "Worklog today",
-    "start_date": "Start date OK",
     "due_date": "Due date set",
     "has_release": "Belongs to a release",
-    "eod_pause": "Paused for end of day",
     "not_over_threshold": "Within aging threshold",
-    "handoff_comment": "Handoff comment",
-    "blocked_reason": "Blocked reason",
 }
 
 
@@ -75,44 +69,16 @@ def evaluate_ticket(issue, day: dt.date, now=None) -> dict:
 
     add("comment_today", "pass" if any(e.kind == "comment" for e in today_events) else "fail")
 
-    if gates.get("worklogs_required"):
-        add("worklog_today", "pass" if any(e.kind == "worklog" for e in today_events) else "fail")
-    else:
-        add("worklog_today", "na", "worklogs not required")
-
-    if gates.get("start_dates_required"):
-        sd = issue.start_date
-        if not sd:
-            add("start_date", "fail", "missing start date")
-        elif bucket in ("todo",) and sd < day:
-            add("start_date", "fail", "planned start in the past")
-        else:
-            add("start_date", "pass")
-    else:
-        add("start_date", "na", "start dates not required")
-
     if gates.get("due_dates_required"):
         add("due_date", "pass" if issue.duedate else "fail",
             "" if issue.duedate else "missing due date")
     else:
         add("due_date", "na", "due dates not required")
 
-    # Rule 5: every ticket must belong to a release (fixVersion).
+    # Every ticket must belong to a release (fixVersion).
     add("has_release", "pass" if issue.has_release else "fail",
         (", ".join(issue.fix_versions)) if issue.has_release
         else "not assigned to a feature/bug/backlog release")
-
-    # Rule 3: pause the active ticket at end of day.
-    if st.is_active_status(issue.status):
-        entered = issue.status_events[-1][0] if issue.status_events else issue.created
-        carried = bool(entered and entered.date() < (now or A.now_utc()).date())
-        pause = st.pause_for(issue.status) or "its paused status"
-        if carried:
-            add("eod_pause", "fail", f"left active overnight — move to {pause} at end of day")
-        else:
-            add("eod_pause", "na", f"move to {pause} before you sign off")
-    else:
-        add("eod_pause", "na", "not an active status")
 
     thr = st.threshold_for(issue.status)
     days_in = _days_in_current_status(issue, now)
@@ -123,40 +89,16 @@ def evaluate_ticket(issue, day: dt.date, now=None) -> dict:
         add("not_over_threshold", "pass" if over <= 0 else "fail",
             f"{days_in:.1f}d in status (limit {thr:g}d)" if over > 0 else "")
 
-    moved_to_qa = [e for e in today_events if e.kind == "status"
-                   and st.bucket_of(e.to) == "qa_stage"]
-    if moved_to_qa:
-        win = dt.timedelta(hours=s["handoff_window_hours"])
-        ok = False
-        for m in moved_to_qa:
-            ok = ok or any(e.kind == "comment"
-                           and (e.actor_id == m.actor_id or e.actor == m.actor)
-                           and m.ts - win <= e.ts <= m.ts + dt.timedelta(minutes=10)
-                           for e in events)
-        add("handoff_comment", "pass" if ok else "fail",
-            "" if ok else "moved to QA without a handoff comment")
-    else:
-        add("handoff_comment", "na", "not moved to QA today")
-
-    if _is_flagged(issue):
-        flag_ts = max((ts for ts, _a, k, _f, to in issue.field_events
-                       if k == "flag" and to.strip()), default=None)
-        has_reason = any(e.kind == "comment" and (flag_ts is None or e.ts >= flag_ts - dt.timedelta(hours=1))
-                         for e in events)
-        add("blocked_reason", "pass" if has_reason else "fail",
-            "" if has_reason else "blocked without a reason comment")
-    else:
-        add("blocked_reason", "na", "not blocked")
-
     eod_signal = bool(today_events)
     return {"issue": issue, "bucket": bucket, "checks": checks,
             "active": st.is_active_status(issue.status),
             "fails": sum(1 for _c, _l, state, _w in checks if state == "fail"),
+            "fail_ids": [c for c, _l, state, _w in checks if state == "fail"],
             "eod_signal": eod_signal}
 
 
 def my_day(issues, developer, day: dt.date, match, now=None) -> dict:
-    """Checklist rows for one developer's IN-FLIGHT tickets — their open, assigned
+    """Checklist rows for one developer's open, assigned
     work: anything in an active status (currently working), paused, in the QA
     pipeline, or reopened. To Do and Done are excluded."""
     rows = []

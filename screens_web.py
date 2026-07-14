@@ -222,6 +222,15 @@ SETTINGS_TMPL = """
 </form>
 <form method="post">
 <div class="sectionbox">
+  <h2 style="margin-top:0">Projects shown in views</h2>
+  <p class="muted">Choose which Jira project spaces to include across every screen. Check both to combine them.</p>
+  {% for pr in projects_list %}
+  <label style="display:inline-block;font-size:13px;margin:3px 18px 3px 0">
+    <input type="checkbox" name="project" value="{{ pr.key }}" {% if pr.key in selected_projects %}checked{% endif %}> {{ pr.name }} <span class="muted">({{ pr.key }})</span></label>
+  {% else %}<span class="muted">No projects visible to the token (or Jira unreachable).</span>{% endfor %}
+  <p class="muted">Leave all unchecked to use the default: <code>{{ default_projects }}</code>.</p>
+</div>
+<div class="sectionbox">
   <h2 style="margin-top:0">Status classification <span class="muted">(every status must be assigned to exactly one bucket)</span></h2>
   <table style="box-shadow:none">
     <tr><th>Status</th><th>Bucket</th><th>Aging threshold (days)</th><th></th></tr>
@@ -308,10 +317,8 @@ GATE_LABELS = [
 ]
 CHECK_LABELS = [
     ("status_mapped", "Status classified"), ("comment_today", "Comment today"),
-    ("worklog_today", "Worklog today (gated)"), ("start_date", "Start date present (gated)"),
     ("due_date", "Due date present (gated)"), ("has_release", "Belongs to a release"),
-    ("eod_pause", "Paused for end of day"), ("not_over_threshold", "Not over aging threshold"),
-    ("handoff_comment", "Handoff comment when moved to QA"), ("blocked_reason", "Blocked reason comment"),
+    ("not_over_threshold", "Not over aging threshold"),
 ]
 
 
@@ -341,7 +348,9 @@ def settings_screen():
                     buckets=st.BUCKETS, bucket_labels=st.BUCKET_LABELS,
                     bucket_default=lambda status: (s["bucket_thresholds"].get(s["status_buckets"].get(status)) or "—"),
                     gate_labels=GATE_LABELS, check_labels=CHECK_LABELS,
-                    developers=auth.all_developers(), hidden=set(s.get("hidden_developers", [])))
+                    developers=auth.all_developers(), hidden=set(s.get("hidden_developers", [])),
+                    projects_list=jc.list_projects(), selected_projects=set(s.get("projects", [])),
+                    default_projects=", ".join(jc.PROJECT_KEYS))
     if request.method == "POST":
         form = request.form
         s["status_buckets"] = {}
@@ -376,6 +385,10 @@ def settings_screen():
         if form.get("default_role") in ("developer", "lead", "exec"):
             s["default_role"] = form["default_role"]
         s["hidden_developers"] = form.getlist("hide_dev")
+        new_projects = form.getlist("project")
+        if new_projects != s.get("projects", []):
+            s["projects"] = new_projects
+            jc.clear_cache()  # project scope changed → drop stale Jira data
         st.save(s)
         saved = True
     statuses = _statuses_seen()
@@ -392,7 +405,9 @@ def settings_screen():
                 thresholds=s["status_thresholds"], buckets=st.BUCKETS,
                 bucket_labels=st.BUCKET_LABELS, bucket_default=bucket_default,
                 gate_labels=GATE_LABELS, check_labels=CHECK_LABELS,
-                developers=auth.all_developers(), hidden=set(s.get("hidden_developers", [])))
+                developers=auth.all_developers(), hidden=set(s.get("hidden_developers", [])),
+                projects_list=jc.list_projects(), selected_projects=set(s.get("projects", [])),
+                default_projects=", ".join(jc.PROJECT_KEYS))
 
 
 # ---------------------------------------------------------------------------
@@ -401,7 +416,7 @@ def settings_screen():
 
 MYDAY_TMPL = """
 <h1>My Day</h1>
-<div class="sub">End-of-day checklist for your {{ g('in_flight','in-flight tickets')|safe }} — your open, assigned work. Fix the red items before signing off{% if is_admin %} · <a href="/my-day/rollup?{{ request.query_string.decode() }}">admin roll-up</a> · <a href="/my-day/feed?{{ request.query_string.decode() }}">activity feed</a>{% endif %}</div>
+<div class="sub">End-of-day checklist for your {{ g('open_work','open tickets')|safe }} — your open, assigned work. Fix the red items before signing off{% if is_admin %} · <a href="/my-day/rollup?{{ request.query_string.decode() }}">admin roll-up</a> · <a href="/my-day/feed?{{ request.query_string.decode() }}">activity feed</a>{% endif %}</div>
 <form method="get" class="filterbar">
   <label>Developer<select name="developer" {% if not is_admin %}{% if dev_options|length <= 1 %}disabled{% endif %}{% endif %} onchange="this.form.submit()">
     {% if is_admin %}<option value="">— select a developer —</option>{% endif %}
@@ -414,9 +429,17 @@ MYDAY_TMPL = """
 <div class="sectionbox"><p class="muted">{% if is_admin %}Select a developer above to see their checklist.{% else %}Your account isn't linked to a developer, so there's nothing to show. Ask an admin to link it.{% endif %}</p></div>
 {% endif %}
 {% if d %}
-<p class="muted"><span class="pill ok">⚡ active</span> = you're currently working on it (an active status). One active ticket per lane at a time; move it to its pause status at end of day. Paused / QA-queue tickets are shown too so you can confirm each is where it should be.</p>
+<p class="muted"><span class="pill ok">⚡ active</span> = you're currently working on it (an active status). Paused / QA-queue tickets are shown too so you can confirm each is where it should be.</p>
+<div class="controls">
+  <span class="ctl-label">Show tickets failing</span>
+  <button type="button" class="chipbtn active" data-filter="all">All</button>
+  {% for cid, label in check_labels %}
+  <button type="button" class="chipbtn" data-filter="{{ cid }}">{{ label }}</button>
+  {% endfor %}
+</div>
+<div id="mdCards">
 {% for r in d.rows %}
-<div class="sectionbox" style="padding:12px 16px">
+<div class="sectionbox mdcard" style="padding:12px 16px" data-fail="{{ r.fail_ids|join(',') }}">
   <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">
     <div><a href="{{ r.issue.url }}" target="_blank"><b>{{ r.issue.key }}</b></a> {{ r.issue.summary }}</div>
     <div>{% if r.active %}<span class="pill ok" title="Active status — currently being worked">⚡ active</span> {% endif %}<span class="pill">{{ r.issue.type }}</span> <span class="pill">{{ r.issue.status }}</span></div>
@@ -427,7 +450,29 @@ MYDAY_TMPL = """
   {% endfor %}
   </div>
 </div>
-{% else %}<p class="muted">Nothing on the checklist — no in-flight tickets for this developer.</p>{% endfor %}
+{% else %}<p class="muted">Nothing on the checklist — no open tickets for this developer.</p>{% endfor %}
+</div>
+<p class="muted" id="mdEmpty" style="display:none">No tickets fail that check. 🎉</p>
+<script>
+(function(){
+  var cards=[].slice.call(document.querySelectorAll('.mdcard'));
+  var empty=document.getElementById('mdEmpty');
+  document.querySelectorAll('.chipbtn').forEach(function(btn){
+    btn.addEventListener('click',function(){
+      document.querySelectorAll('.chipbtn').forEach(function(b){b.classList.remove('active');});
+      btn.classList.add('active');
+      var f=btn.getAttribute('data-filter'), shown=0;
+      cards.forEach(function(c){
+        var fails=(c.getAttribute('data-fail')||'').split(',');
+        var ok = f==='all' || fails.indexOf(f)>=0;
+        c.style.display = ok ? '' : 'none';
+        if(ok) shown++;
+      });
+      if(empty) empty.style.display = shown ? 'none' : '';
+    });
+  });
+})();
+</script>
 {% endif %}
 """
 
@@ -454,7 +499,8 @@ def my_day_screen():
     d = (checklist.my_day(_issues(None), selected_dev, day, dr._dev_match)
          if selected_dev else None)
     return page(MYDAY_TMPL, active="/my-day", d=d, g=gloss,
-                is_admin=is_admin, dev_options=dev_options, selected_dev=selected_dev)
+                is_admin=is_admin, dev_options=dev_options, selected_dev=selected_dev,
+                check_labels=[(cid, checklist.CHECK_LABELS[cid]) for cid in checklist.CHECK_ORDER])
 
 
 def _day_arg():
@@ -639,7 +685,7 @@ tickets missing dates, the due-date slip table (original vs current, pushes, sli
 reschedule counts. The Jira-side prerequisites are documented in <code>docs/jira_process_setup.md</code>.</p></div>
 {% else %}
 {% if h.missing %}
-<h2 style="font-size:14px">In-flight tickets missing dates</h2>
+<h2 style="font-size:14px">Open tickets missing dates</h2>
 <table><tr><th>Issue</th><th>Summary</th><th>Developer</th><th>Status</th><th>Missing</th></tr>
 {% for r in h.missing %}
 <tr><td><a href="{{ r.issue.url }}" target="_blank">{{ r.issue.key }}</a></td><td>{{ r.issue.summary }}</td>
@@ -664,12 +710,12 @@ reschedule counts. The Jira-side prerequisites are documented in <code>docs/jira
 {% else %}<tr><td colspan="5" class="muted">No start-date reschedules recorded.</td></tr>{% endfor %}</table>
 {% endif %}
 {% if est_on %}
-<h2 style="font-size:14px">In-flight tickets without an estimate</h2>
+<h2 style="font-size:14px">Open tickets without an estimate</h2>
 <table><tr><th>Issue</th><th>Summary</th><th>Developer</th><th>Status</th></tr>
 {% for r in h.no_estimate %}
 <tr><td><a href="{{ r.issue.url }}" target="_blank">{{ r.issue.key }}</a></td><td>{{ r.issue.summary }}</td>
 <td>{{ r.issue.assignee }}</td><td>{{ r.issue.status }}</td></tr>
-{% else %}<tr><td colspan="4" class="muted">Every in-flight ticket has an estimate.</td></tr>{% endfor %}</table>
+{% else %}<tr><td colspan="4" class="muted">Every open ticket has an estimate.</td></tr>{% endfor %}</table>
 {% endif %}
 {% endif %}
 

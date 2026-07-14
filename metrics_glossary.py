@@ -16,9 +16,9 @@ GLOSSARY = {
                      "Start Investigation, Development / In Design, In QA Testing, In Staging "
                      "Testing, In Production Testing. It means someone is CURRENTLY working on "
                      "it. One per lane at a time; move it to its pause status at end of day.",
-    "in_flight": "A developer's open, assigned work: a ticket in an active, paused, QA-pipeline, "
+    "open_work": "A developer's open, assigned tickets: anything in an active, paused, QA-pipeline, "
                  "or reopened status. NOT To Do (not started) and NOT Done. Broader than "
-                 "'active' — an in-flight ticket may be paused or waiting, not being worked right now.",
+                 "'active' — an open ticket may be paused or waiting, not being worked right now.",
     "eod_signal": "Evidence a ticket was touched that day — a comment, worklog, status change, "
                   "or any tracked update. Measured across tickets in an active or paused status.",
     "silent": "No activity-feed event (transition, comment, worklog, field change) in N days "
