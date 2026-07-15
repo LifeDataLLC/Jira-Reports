@@ -89,9 +89,14 @@ def evaluate_ticket(issue, day: dt.date, now=None) -> dict:
         add("not_over_threshold", "pass" if over <= 0 else "fail",
             f"{days_in:.1f}d in status (limit {thr:g}d)" if over > 0 else "")
 
+    # "Stale" = no status change in `stale_days` days (time in current status).
+    dsc = _days_in_current_status(issue, now)
+    stale = dsc is not None and dsc >= s.get("stale_days", 10)
+
     eod_signal = bool(today_events)
     return {"issue": issue, "bucket": bucket, "checks": checks,
             "active": st.is_active_status(issue.status),
+            "stale": stale, "stale_days": round(dsc, 1) if dsc is not None else None,
             "fails": sum(1 for _c, _l, state, _w in checks if state == "fail"),
             "fail_ids": [c for c, _l, state, _w in checks if state == "fail"],
             "eod_signal": eod_signal}

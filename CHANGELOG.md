@@ -148,3 +148,8 @@
 - Settings: "Projects shown in views" — pick the Support space, the V2 space,
   or both (or any Jira project); jira_client.configured_projects() feeds every
   fetch, and the cache clears when the selection changes.
+
+### My Day: stale mark
+- Tickets get a "⏳ stale Nd" mark on My Day when their status hasn't changed in
+  `stale_days` days (Settings-configurable, default 10). Added a "Stale" quick
+  filter. Distinct from Attention "Aging" (per-status threshold).

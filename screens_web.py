@@ -279,6 +279,8 @@ SETTINGS_TMPL = """
     <input type="number" min="0" name="handoff_window_hours" value="{{ s.handoff_window_hours }}" style="width:70px"></label><br><br>
   <label style="font-size:13px">Silent after (days without activity)
     <input type="number" min="1" name="silent_days" value="{{ s.silent_days }}" style="width:70px"></label><br><br>
+  <label style="font-size:13px">Mark <b>stale</b> after (days without a status change)
+    <input type="number" min="1" name="stale_days" value="{{ s.stale_days }}" style="width:70px"></label><br><br>
   <label style="font-size:13px">Investigator gap spacer (days)
     <input type="number" min="1" name="gap_days" value="{{ s.gap_days }}" style="width:70px"></label><br><br>
   <label style="font-size:13px">PR/build keywords (comma-separated)<br>
@@ -373,7 +375,7 @@ def settings_screen():
             s["gates"][g] = f"gate__{g}" in form
         for c, _ in CHECK_LABELS:
             s["checklist_items"][c] = f"check__{c}" in form
-        for num_key in ("handoff_window_hours", "silent_days", "gap_days"):
+        for num_key in ("handoff_window_hours", "silent_days", "gap_days", "stale_days"):
             try:
                 s[num_key] = max(int(form.get(num_key) or s[num_key]), 0)
             except ValueError:
@@ -431,18 +433,19 @@ MYDAY_TMPL = """
 {% if d %}
 <p class="muted"><span class="pill ok">⚡ active</span> = you're currently working on it (an active status). Paused / QA-queue tickets are shown too so you can confirm each is where it should be.</p>
 <div class="controls">
-  <span class="ctl-label">Show tickets failing</span>
+  <span class="ctl-label">Show</span>
   <button type="button" class="chipbtn active" data-filter="all">All</button>
   {% for cid, label in check_labels %}
-  <button type="button" class="chipbtn" data-filter="{{ cid }}">{{ label }}</button>
+  <button type="button" class="chipbtn" data-filter="{{ cid }}">Failing: {{ label }}</button>
   {% endfor %}
+  <button type="button" class="chipbtn" data-filter="stale">Stale</button>
 </div>
 <div id="mdCards">
 {% for r in d.rows %}
-<div class="sectionbox mdcard" style="padding:12px 16px" data-fail="{{ r.fail_ids|join(',') }}">
+<div class="sectionbox mdcard" style="padding:12px 16px" data-fail="{{ r.fail_ids|join(',') }}" data-stale="{{ 1 if r.stale else 0 }}">
   <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">
     <div><a href="{{ r.issue.url }}" target="_blank"><b>{{ r.issue.key }}</b></a> {{ r.issue.summary }}</div>
-    <div>{% if r.active %}<span class="pill ok" title="Active status — currently being worked">⚡ active</span> {% endif %}<span class="pill">{{ r.issue.type }}</span> <span class="pill">{{ r.issue.status }}</span></div>
+    <div>{% if r.active %}<span class="pill ok" title="Active status — currently being worked">⚡ active</span> {% endif %}{% if r.stale %}<span class="pill bad" title="No status change in {{ r.stale_days }} days">⏳ stale {{ r.stale_days|round|int }}d</span> {% endif %}<span class="pill">{{ r.issue.type }}</span> <span class="pill">{{ r.issue.status }}</span></div>
   </div>
   <div style="margin-top:8px">
   {% for cid, label, state, why in r.checks %}
@@ -464,7 +467,7 @@ MYDAY_TMPL = """
       var f=btn.getAttribute('data-filter'), shown=0;
       cards.forEach(function(c){
         var fails=(c.getAttribute('data-fail')||'').split(',');
-        var ok = f==='all' || fails.indexOf(f)>=0;
+        var ok = f==='all' || (f==='stale' ? c.getAttribute('data-stale')==='1' : fails.indexOf(f)>=0);
         c.style.display = ok ? '' : 'none';
         if(ok) shown++;
       });

@@ -71,6 +71,8 @@ DEFAULTS = {
     "silent_days": 2,
     # Investigator: inactivity gaps >= this many days rendered as spacers
     "gap_days": 7,
+    # My Day: mark a ticket "stale" when its status hasn't changed in this many days
+    "stale_days": 10,
     # Sprint boards (moved here from env per Phase 5)
     "board_ids": [],
     # Start-date custom field id (runtime-detected; admin-overridable)
