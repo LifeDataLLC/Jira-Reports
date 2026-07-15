@@ -111,6 +111,7 @@ def evaluate_ticket(issue, day: dt.date, now=None) -> dict:
     eod_signal = bool(today_events)
     return {"issue": issue, "bucket": bucket, "checks": checks,
             "active": st.is_active_status(issue.status),
+            "lane": st.lane_label(issue.status),
             "stale": stale, "stale_days": round(dsc, 1) if dsc is not None else None,
             "last_activity": last_activity, "last_activity_str": _ago(last_activity, now),
             "fails": sum(1 for _c, _l, state, _w in checks if state == "fail"),
@@ -133,9 +134,11 @@ def my_day(issues, developer, day: dt.date, match, now=None) -> dict:
         if developer and match and not match(developer, i.assignee, i.assignee_id):
             continue
         rows.append(evaluate_ticket(i, day, now))
-    # Most recent action first (handoff by anyone, or the developer's own work).
+    # Tickets in an active status ("currently working") are pinned to the top;
+    # within each group, most recent action first (a handoff by anyone, or the
+    # developer's own work).
     _min = dt.datetime.min.replace(tzinfo=dt.timezone.utc)
-    rows.sort(key=lambda r: r["last_activity"] or _min, reverse=True)
+    rows.sort(key=lambda r: (r["active"], r["last_activity"] or _min), reverse=True)
     return {"rows": rows, "day": day,
             "total_fails": sum(r["fails"] for r in rows)}
 

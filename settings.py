@@ -154,6 +154,12 @@ def load(path: str | None = None) -> dict:
                     data[k].update(v)
                 else:
                     data[k] = v
+            # active_statuses is defined in code (workflow.py) and is NOT admin-
+            # editable, so always take the current code definition — otherwise a
+            # copy frozen into settings.json at first-run can drift from the code
+            # and a status like "Development / In Design" stops reading as active.
+            import workflow as wf
+            data["active_statuses"] = json.loads(json.dumps(wf.ACTIVE))
             _cache.update(data=data, mtime=mtime, path=path)
             return data
         except (OSError, ValueError):
@@ -183,10 +189,15 @@ def save(data: dict, path: str | None = None) -> None:
 
 def bucket_of(status: str, status_category: str | None = None) -> str | None:
     """Bucket for a status, or None when unmapped. Never guesses (PRD §3.1) —
-    except Jira's own Done category, which is unambiguous."""
+    except Jira's own Done category, which is unambiguous. Admin overrides win;
+    the code workflow (workflow.py) is the fallback base so a status the code
+    already knows never reads as unmapped just because settings.json is stale."""
     b = load()["status_buckets"].get(status)
     if b:
         return b
+    import workflow as wf
+    if status in wf.BUCKETS:
+        return wf.BUCKETS[status]
     if status_category == "Done":
         return "done"
     return None
@@ -208,8 +219,10 @@ def gate(name: str) -> bool:
 
 
 def unmapped_statuses(seen: set[str]) -> list[str]:
-    """Statuses present in synced data but not classified into a bucket."""
-    mapped = set(load()["status_buckets"])
+    """Statuses present in synced data but not classified into a bucket (by an
+    admin override or the code workflow)."""
+    import workflow as wf
+    mapped = set(load()["status_buckets"]) | set(wf.BUCKETS)
     return sorted(s for s in seen if s and s not in mapped)
 
 
@@ -222,6 +235,15 @@ def is_active_status(status: str) -> bool:
 def lane_of(status: str) -> str | None:
     a = load().get("active_statuses", {}).get(status)
     return a.get("lane") if a else None
+
+
+def lane_label(status: str) -> str | None:
+    """Friendly lane name for an active status (e.g. 'Development'), or None."""
+    lane = lane_of(status)
+    if not lane:
+        return None
+    import workflow as wf
+    return wf.LANE_LABELS.get(lane, lane)
 
 
 def pause_for(status: str) -> str | None:

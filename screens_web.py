@@ -102,6 +102,10 @@ CHROME_TOP = """
  .md-card{background:var(--white);border:1px solid var(--line);border-left:4px solid var(--line);border-radius:var(--radius);padding:14px 18px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
  .md-card.clean{border-left-color:var(--green)}
  .md-card.attention{border-left-color:var(--red)}
+ .md-card.active-now{box-shadow:0 0 0 3px var(--green-t),0 3px 12px rgba(31,169,99,.18)}
+ .md-ribbon{display:inline-flex;align-items:center;gap:7px;background:var(--green);color:#fff;font-size:11px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;padding:4px 11px;border-radius:999px;margin-bottom:9px}
+ .md-ribbon .live{width:7px;height:7px;border-radius:50%;background:#fff;animation:mdpulse 1.5s infinite}
+ @keyframes mdpulse{0%{box-shadow:0 0 0 0 rgba(255,255,255,.7)}70%{box-shadow:0 0 0 6px rgba(255,255,255,0)}100%{box-shadow:0 0 0 0 rgba(255,255,255,0)}}
  .md-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-start}
  .md-title{font-size:14.5px;line-height:1.45}
  .md-title a{font-weight:800;color:var(--ink)}
@@ -483,6 +487,7 @@ MYDAY_TMPL = """
 <div class="controls">
   <span class="ctl-label">Filter</span>
   <button type="button" class="chipbtn active" data-filter="all">All</button>
+  <button type="button" class="chipbtn" data-filter="active">⚡ Working now</button>
   {% for cid, label in check_labels %}
   <button type="button" class="chipbtn" data-filter="{{ cid }}">Missing: {{ label|replace('Belongs to a release','release')|replace('Due date set','due date')|replace('Status classified','status')|replace('Comment today','comment')|replace('Within aging threshold','within threshold') }}</button>
   {% endfor %}
@@ -490,11 +495,11 @@ MYDAY_TMPL = """
 </div>
 <div id="mdCards">
 {% for r in d.rows %}
-<div class="md-card mdcard {{ 'clean' if r.fails == 0 else 'attention' }}" data-fail="{{ r.fail_ids|join(',') }}" data-stale="{{ 1 if r.stale else 0 }}">
+<div class="md-card mdcard {{ 'clean' if r.fails == 0 else 'attention' }}{{ ' active-now' if r.active else '' }}" data-fail="{{ r.fail_ids|join(',') }}" data-stale="{{ 1 if r.stale else 0 }}" data-active="{{ 1 if r.active else 0 }}">
+  {% if r.active %}<span class="md-ribbon"><span class="live"></span>⚡ Working now{% if r.lane %} · {{ r.lane }}{% endif %}</span>{% endif %}
   <div class="md-head">
     <div class="md-title"><a href="{{ r.issue.url }}" target="_blank">{{ r.issue.key }}</a> {{ r.issue.summary }}{% if r.last_activity_str %} <span class="muted" style="font-weight:400">· {{ r.last_activity_str }}</span>{% endif %}</div>
     <div class="md-tags">
-      {% if r.active %}<span class="pill ok" title="You're working on this now">⚡ active</span>{% endif %}
       {% if r.stale %}<span class="pill bad" title="No status change in {{ r.stale_days }} days">⏳ stale {{ r.stale_days|round|int }}d</span>{% endif %}
       <span class="pill">{{ r.issue.type }}</span>
       <span class="pill">{{ r.issue.status }}</span>
@@ -520,7 +525,10 @@ MYDAY_TMPL = """
       var f=btn.getAttribute('data-filter'), shown=0;
       cards.forEach(function(c){
         var fails=(c.getAttribute('data-fail')||'').split(',');
-        var ok = f==='all' || (f==='stale' ? c.getAttribute('data-stale')==='1' : fails.indexOf(f)>=0);
+        var ok = f==='all' ? true
+               : f==='stale' ? c.getAttribute('data-stale')==='1'
+               : f==='active' ? c.getAttribute('data-active')==='1'
+               : fails.indexOf(f)>=0;
         c.style.display = ok ? '' : 'none';
         if(ok) shown++;
       });
