@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import csv
 import io
+import os
+import threading
 import time
 
 from flask import Flask, Response, abort, jsonify, redirect, render_template_string, request
@@ -48,6 +50,11 @@ import auth_web
 app.secret_key = auth.secret_key()
 app.permanent_session_lifetime = __import__("datetime").timedelta(days=14)
 app.register_blueprint(auth_web.authbp)
+
+# Warm the Jira cache in the background at startup so the first page after a
+# (re)start or deploy is served from memory instead of blocking on a live pull.
+if os.environ.get("JIRA_API_TOKEN") and jc.CACHE_TTL > 0:
+    threading.Thread(target=jc.warm_cache, daemon=True).start()
 
 # Paths reachable without a login (the scheduled snapshot job hits /tasks/snapshot).
 _PUBLIC_PREFIXES = ("/login", "/register", "/logout", "/tasks/snapshot", "/static", "/favicon")

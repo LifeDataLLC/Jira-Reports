@@ -65,14 +65,41 @@ WINDOW_DAYS = int(os.environ.get("JIRA_WINDOW_DAYS", "14"))
 CACHE_TTL = int(os.environ.get("JIRA_CACHE_TTL", "300"))
 _cache_lock = threading.Lock()
 _cache_store: dict[Any, tuple[float, Any]] = {}
+_refreshing: set[Any] = set()
+_cached_fns: dict[str, Any] = {}
+
+
+def _refresh_async(fn, args, kwargs, key):
+    """Refresh one cache entry in a daemon thread (at most one per key)."""
+    with _cache_lock:
+        if key in _refreshing:
+            return
+        _refreshing.add(key)
+
+    def run():
+        try:
+            result = fn(*args, **kwargs)
+            with _cache_lock:
+                _cache_store[key] = (time.time(), result)
+        except Exception:
+            pass  # keep serving the stale value; try again next request
+        finally:
+            with _cache_lock:
+                _refreshing.discard(key)
+
+    threading.Thread(target=run, daemon=True).start()
 
 
 def _cached(fn):
-    """Cache a fetch helper's return value by its arguments for CACHE_TTL seconds.
+    """Cache a fetch helper's return value by its arguments (stale-while-revalidate).
 
-    The wrapped function runs outside the lock, so a slow Jira call never blocks
-    other requests; at worst two concurrent misses both fetch, which is harmless.
+    A fresh entry (< CACHE_TTL old) is served straight from memory. A stale entry
+    is ALSO served immediately, but triggers a background refresh so the next
+    request gets fresh data — so a page load never blocks on a slow Jira pull
+    except the very first time a given query is seen (a cold cache).
     """
+    _cached_fns[fn.__name__] = fn
+
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         if CACHE_TTL <= 0:
@@ -81,9 +108,11 @@ def _cached(fn):
         now = time.time()
         with _cache_lock:
             hit = _cache_store.get(key)
-            if hit and now - hit[0] < CACHE_TTL:
-                return hit[1]
-        result = fn(*args, **kwargs)
+        if hit:
+            if now - hit[0] >= CACHE_TTL:
+                _refresh_async(fn, args, kwargs, key)  # serve stale, refresh behind
+            return hit[1]
+        result = fn(*args, **kwargs)  # cold cache: must fetch synchronously
         with _cache_lock:
             _cache_store[key] = (time.time(), result)
         return result
@@ -94,6 +123,21 @@ def clear_cache() -> None:
     """Drop all cached fetches (e.g. to force a fresh pull)."""
     with _cache_lock:
         _cache_store.clear()
+
+
+def warm_cache() -> None:
+    """Pre-fetch the common datasets so the first page after a (re)start is fast.
+
+    Safe to call in a background thread at startup; swallows all errors (e.g. no
+    Jira credentials in a test/dev environment)."""
+    try:
+        fetch_dev_dataset(None)
+    except Exception:
+        pass
+    try:
+        detect_custom_fields()
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +240,8 @@ def fetch_issues_by_time(time_clause: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 DEV_LOOKBACK_DAYS = int(os.environ.get("DEV_REPORTS_MAX_LOOKBACK_DAYS", "365"))
+# Only fully page comments/worklogs for issues updated within this many days.
+TOPUP_DAYS = int(os.environ.get("DEV_REPORTS_TOPUP_DAYS", "14"))
 
 
 @_cached
@@ -270,9 +316,15 @@ def fetch_dev_dataset(project: str | None = None, lookback_days: int | None = No
     jql = (f'project in ({projects}) AND ('
            f'statusCategory != Done OR updated >= -{lookback}d) ORDER BY updated DESC')
     issues = search_issues(jql, fields, expand_changelog=True)
-    # Top up truncated comment/worklog lists (search returns a capped page).
+    # Top up truncated comment/worklog lists (search returns a capped page), but
+    # only for recently-updated issues — a page load blocks on these extra calls,
+    # and the "comment today"/EOD checks only look at recent activity, so there's
+    # no reason to fully page the history of tickets untouched for weeks.
+    cutoff = (now_utc().date() - dt.timedelta(days=TOPUP_DAYS)).isoformat()
     for raw in issues:
         f = raw.get("fields", {})
+        if (f.get("updated") or "")[:10] < cutoff:
+            continue
         c = f.get("comment") or {}
         if c.get("total", 0) > len(c.get("comments", [])):
             f["comment"] = {"comments": _fetch_all_pages(
