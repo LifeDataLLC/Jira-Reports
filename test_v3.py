@@ -55,8 +55,9 @@ def test_settings():
     check("other gates off", not fresh["gates"]["sprints_enabled"] and not fresh["gates"]["estimates_used"])
     check("active statuses seeded", len(fresh["active_statuses"]) == len(wf.ACTIVE)
           and all(s in fresh["active_statuses"] for s in
-                  ("Development / In Design", "Investigation", "Customer Feedback",
-                   "Review and Testing", "In QA Testing (QA Env)")))
+                  ("Development / In Design", "Investigation",
+                   "Review and Testing", "In QA Testing (QA Env)"))
+          and "Customer Feedback" not in fresh["active_statuses"])
     check("active lane + pause", fresh["active_statuses"]["In QA Testing (QA Env)"]["lane"] == "qa"
           and fresh["active_statuses"]["In QA Testing (QA Env)"]["pause"] == "Pause QA Testing")
 

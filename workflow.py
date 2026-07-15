@@ -60,7 +60,6 @@ ACTIVE = {
     "Investigation": {"lane": "dev", "pause": "Pause Investigation"},
     "Development / In Design": {"lane": "dev", "pause": "Pause Development / Design"},
     "Development": {"lane": "dev", "pause": "Pause Development / Design"},
-    "Customer Feedback": {"lane": "dev", "pause": None},
     # qa lane — QA + review/testing work
     "In QA Testing (QA Env)": {"lane": "qa", "pause": "Pause QA Testing"},
     "Review and Testing": {"lane": "qa", "pause": "Pause QA Testing"},
