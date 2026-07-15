@@ -42,41 +42,74 @@ NAV = [
 
 CHROME_TOP = """
 <style>
- body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;margin:0;color:#172b4d;background:#f4f5f7}
- nav{background:#0747a6;padding:10px 20px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
- nav a{color:#dbe7ff;text-decoration:none;font-size:13px;padding:5px 10px;border-radius:5px}
- nav a:hover,nav a.active{background:#fff;color:#0747a6}
- nav .brand{color:#fff;font-weight:700;margin-right:10px}
- .wrap{max-width:1150px;margin:22px auto;padding:0 20px}
- h1{font-size:20px;margin:0 0 4px}.sub{color:#6b778c;font-size:13px;margin-bottom:18px}
- h2{font-size:15px;margin:26px 0 10px}
+ :root{--green:#1fa963;--green-d:#17864e;--green-t:#e9f6ef;--ink:#212121;--ink2:#333;
+   --muted:#6b6b6b;--line:#e7e8e7;--bg:#f6f7f6;--white:#fff;--red:#d64545;--red-t:#fbeaea;
+   --amber:#b7791f;--amber-t:#fdf3e3;--radius:12px}
+ *{box-sizing:border-box}
+ body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;color:var(--ink);background:var(--bg);-webkit-font-smoothing:antialiased}
+ nav{background:var(--ink);padding:0 18px;display:flex;gap:2px;flex-wrap:wrap;align-items:center;min-height:52px}
+ nav a{color:#c9cbc9;text-decoration:none;font-size:13px;padding:8px 12px;border-radius:8px;font-weight:500}
+ nav a:hover{color:#fff;background:rgba(255,255,255,.09)}
+ nav a.active{color:#fff;background:var(--green)}
+ nav .brand{color:#fff;font-weight:800;margin-right:14px;font-size:15px;letter-spacing:-.2px}
+ nav .brand .dot{color:var(--green)}
+ .wrap{max-width:1120px;margin:26px auto;padding:0 20px}
+ h1{font-size:24px;margin:0 0 4px;font-weight:800;letter-spacing:-.4px}
+ h2{font-size:16px;margin:26px 0 10px;font-weight:700}
+ .sub{color:var(--muted);font-size:13.5px;margin-bottom:20px}
+ a{color:var(--green-d);text-decoration:none}a:hover{text-decoration:underline}
  .cards{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:20px}
- .card{background:#fff;border-radius:8px;padding:14px 18px;box-shadow:0 1px 3px rgba(9,30,66,.12);flex:1;min-width:150px}
- .card .n{font-size:26px;font-weight:700}.card .l{color:#6b778c;font-size:12px;margin-top:2px}
- table{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(9,30,66,.12);margin-bottom:8px}
- th,td{text-align:left;padding:9px 13px;border-bottom:1px solid #ebecf0;font-size:13px}
- th{background:#fafbfc;color:#6b778c;position:sticky;top:0;cursor:pointer;user-select:none}
- tr:hover td{background:#f7f8fa}
- a{color:#0052cc;text-decoration:none}a:hover{text-decoration:underline}
- .pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;background:#dfe1e6}
- .warn{background:#fff7e6;color:#974f00}.bad{background:#ffebe6;color:#bf2600}.ok{background:#e3fcef;color:#006644}
- .muted{color:#6b778c;font-size:12px}
- .sectionbox{background:#fff;border-radius:8px;padding:16px 18px;box-shadow:0 1px 3px rgba(9,30,66,.12);margin-bottom:16px}
- .banner{background:#fff7e6;border:1px solid #ffe2b3;color:#974f00;border-radius:8px;padding:10px 16px;margin-bottom:16px;font-size:13px}
- .fresh{color:#6b778c;font-size:11px;text-align:right;margin:4px 0}
- .filterbar{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;background:#fff;border-radius:8px;padding:12px 16px;box-shadow:0 1px 3px rgba(9,30,66,.12);margin-bottom:16px}
- .filterbar label{font-size:11px;color:#5e6c84}
- .filterbar input,.filterbar select{display:block;padding:6px 9px;border:1px solid #dfe1e6;border-radius:6px;font-size:13px;margin-top:2px}
- .btn{background:#0052cc;color:#fff;padding:7px 14px;border-radius:6px;font-size:13px;border:none;cursor:pointer;display:inline-block;text-decoration:none}
- .btn:hover{background:#0747a6;text-decoration:none;color:#fff}
- .btn-ghost{background:#fff;color:#42526e;border:1px solid #dfe1e6;padding:6px 13px;border-radius:6px;font-size:13px;cursor:pointer;text-decoration:none;display:inline-block}
- .chip{display:inline-flex;align-items:center;gap:4px;padding:2px 9px;border-radius:11px;font-size:11px;font-weight:600;margin:1px 3px 1px 0}
- .checkrow{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:10px;font-size:12px;margin:1px 4px 1px 0}
- .c-pass{background:#e3fcef;color:#006644}.c-fail{background:#ffebe6;color:#bf2600}.c-na{background:#f4f5f7;color:#8993a4}
- .glossary{border-bottom:1px dotted #b3bac5;cursor:help}
+ .card{background:var(--white);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;flex:1;min-width:150px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+ .card .n{font-size:26px;font-weight:800}.card .l{color:var(--muted);font-size:12px;margin-top:2px}
+ table{width:100%;border-collapse:collapse;background:var(--white);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin-bottom:8px}
+ th,td{text-align:left;padding:10px 13px;border-bottom:1px solid var(--line);font-size:13px}
+ th{background:#fafbfa;color:var(--muted);font-weight:600;position:sticky;top:0;cursor:pointer;user-select:none}
+ tr:hover td{background:#fafbfa}
+ .pill{display:inline-block;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:600;background:#eef0ee;color:var(--ink2)}
+ .pill.ok,.ok{background:var(--green-t);color:var(--green-d)}
+ .pill.warn,.warn{background:var(--amber-t);color:var(--amber)}
+ .pill.bad,.bad{background:var(--red-t);color:var(--red)}
+ .muted{color:var(--muted);font-size:12px}
+ .sectionbox{background:var(--white);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;margin-bottom:16px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+ .banner{background:var(--amber-t);border:1px solid #f0dcae;color:var(--amber);border-radius:var(--radius);padding:11px 16px;margin-bottom:16px;font-size:13px}
+ .fresh{color:#9a9a9a;font-size:11px;text-align:right;margin:2px 0 10px}
+ .filterbar{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;background:var(--white);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;margin-bottom:16px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+ .filterbar label{font-size:11px;color:var(--muted);font-weight:600}
+ .filterbar input,.filterbar select{display:block;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;margin-top:3px;background:#fff;color:var(--ink)}
+ .filterbar input:focus,.filterbar select:focus{outline:none;border-color:var(--green);box-shadow:0 0 0 3px rgba(31,169,99,.18)}
+ .btn{background:var(--green);color:#fff;padding:9px 16px;border-radius:8px;font-size:13px;font-weight:600;border:none;cursor:pointer;display:inline-block;text-decoration:none}
+ .btn:hover{background:var(--green-d);text-decoration:none;color:#fff}
+ .btn-ghost{background:#fff;color:var(--ink2);border:1px solid var(--line);padding:8px 14px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;text-decoration:none;display:inline-block}
+ .btn-ghost:hover{background:#f2f3f2;text-decoration:none}
+ .chip{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:600;margin:1px 3px 1px 0}
+ .checkrow,.check{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:999px;font-size:12.5px;font-weight:500;margin:3px 6px 0 0;border:1px solid transparent}
+ .c-pass{background:var(--green-t);color:var(--green-d)}
+ .c-fail{background:var(--red-t);color:var(--red);border-color:#f0c8c8;font-weight:600}
+ .c-na{background:#f1f2f1;color:#9a9a9a}
+ .glossary{border-bottom:1px dotted #b3b3b3;cursor:help}
+ .controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+ .controls .ctl-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-right:2px}
+ .chipbtn{background:#fff;border:1px solid var(--line);border-radius:999px;padding:6px 13px;font-size:12.5px;color:var(--ink2);cursor:pointer;font-weight:500}
+ .chipbtn:hover{border-color:#bdbfbd}
+ .chipbtn.active{background:var(--green);border-color:var(--green);color:#fff;font-weight:600}
+ .md-summary{background:var(--white);border:1px solid var(--line);border-radius:var(--radius);padding:15px 18px;margin-bottom:16px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+ .md-progress{height:9px;background:#eceeec;border-radius:999px;overflow:hidden;margin-bottom:10px}
+ .md-progress-bar{height:100%;background:var(--green);border-radius:999px}
+ .md-summary-text{font-size:13px;color:var(--muted);display:flex;gap:18px;flex-wrap:wrap;align-items:baseline}
+ .md-summary-text .big{color:var(--ink);font-size:16px;font-weight:800}
+ .md-kpi{display:inline-flex;align-items:center;gap:6px}
+ .md-kpi .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+ .md-card{background:var(--white);border:1px solid var(--line);border-left:4px solid var(--line);border-radius:var(--radius);padding:14px 18px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+ .md-card.clean{border-left-color:var(--green)}
+ .md-card.attention{border-left-color:var(--red)}
+ .md-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-start}
+ .md-title{font-size:14.5px;line-height:1.45}
+ .md-title a{font-weight:800;color:var(--ink)}
+ .md-tags{display:flex;gap:6px;flex-wrap:wrap;align-items:center;flex-shrink:0}
+ .md-checks{margin-top:10px}
 </style>
 <nav>
- <span class="brand">LifeData Eng Reports</span>
+ <span class="brand">LifeData<span class="dot">.</span> Reports</span>
  {NAVLINKS}
 </nav>
 
@@ -137,8 +170,9 @@ def page(body, active="", show_banner=True, **ctx):
     if admin:
         navlinks += '<a href="/admin/users">Users</a>'
     if user:
-        navlinks += (f'<span style="margin-left:auto;color:#b3d0ff;font-size:12px">'
-                     f'{user["email"]} ({user["role"]}) · <a href="/logout" style="color:#fff">Log out</a></span>')
+        navlinks += (f'<span style="margin-left:auto;color:#9a9c9a;font-size:12px">'
+                     f'{user["email"]} ({user["role"]}) · '
+                     f'<a href="/logout" style="color:#fff;text-decoration:underline">Log out</a></span>')
     chrome = CHROME_TOP.replace("{NAVLINKS}", navlinks) + _overlay()
     banner = unmapped_banner() if (show_banner and admin) else ""
     fresh = dt.datetime.now().strftime("%H:%M")
@@ -418,7 +452,7 @@ def settings_screen():
 
 MYDAY_TMPL = """
 <h1>My Day</h1>
-<div class="sub">End-of-day checklist for your {{ g('open_work','open tickets')|safe }} — your open, assigned work. Fix the red items before signing off{% if is_admin %} · <a href="/my-day/rollup?{{ request.query_string.decode() }}">admin roll-up</a> · <a href="/my-day/feed?{{ request.query_string.decode() }}">activity feed</a>{% endif %}</div>
+<div class="sub">Your open tickets — clear the red items before you sign off{% if is_admin %} · <a href="/my-day/rollup?{{ request.query_string.decode() }}">team roll-up</a> · <a href="/my-day/feed?{{ request.query_string.decode() }}">activity feed</a>{% endif %}</div>
 <form method="get" class="filterbar">
   <label>Developer<select name="developer" {% if not is_admin %}{% if dev_options|length <= 1 %}disabled{% endif %}{% endif %} onchange="this.form.submit()">
     {% if is_admin %}<option value="">— select a developer —</option>{% endif %}
@@ -431,31 +465,50 @@ MYDAY_TMPL = """
 <div class="sectionbox"><p class="muted">{% if is_admin %}Select a developer above to see their checklist.{% else %}Your account isn't linked to a developer, so there's nothing to show. Ask an admin to link it.{% endif %}</p></div>
 {% endif %}
 {% if d %}
-<p class="muted"><span class="pill ok">⚡ active</span> = you're currently working on it (an active status). Paused / QA-queue tickets are shown too so you can confirm each is where it should be.</p>
+{% set total = d.rows|length %}
+{% set clean = d.rows|selectattr('fails','equalto',0)|list|length %}
+{% set stale = d.rows|selectattr('stale')|list|length %}
+{% set active = d.rows|selectattr('active')|list|length %}
+{% if total %}
+<div class="md-summary">
+  <div class="md-progress"><div class="md-progress-bar" style="width:{{ (100*clean/total)|round|int }}%"></div></div>
+  <div class="md-summary-text">
+    <span><span class="big">{{ clean }}</span> / {{ total }} tickets up to date</span>
+    <span class="md-kpi"><span class="dot" style="background:#d64545"></span>{{ total-clean }} need attention</span>
+    <span class="md-kpi"><span class="dot" style="background:#b7791f"></span>{{ stale }} stale</span>
+    <span class="md-kpi"><span class="dot" style="background:#1fa963"></span>{{ active }} active now</span>
+  </div>
+</div>
+{% endif %}
 <div class="controls">
-  <span class="ctl-label">Show</span>
+  <span class="ctl-label">Filter</span>
   <button type="button" class="chipbtn active" data-filter="all">All</button>
   {% for cid, label in check_labels %}
-  <button type="button" class="chipbtn" data-filter="{{ cid }}">Failing: {{ label }}</button>
+  <button type="button" class="chipbtn" data-filter="{{ cid }}">Missing: {{ label|replace('Belongs to a release','release')|replace('Due date set','due date')|replace('Status classified','status')|replace('Comment today','comment')|replace('Within aging threshold','within threshold') }}</button>
   {% endfor %}
   <button type="button" class="chipbtn" data-filter="stale">Stale</button>
 </div>
 <div id="mdCards">
 {% for r in d.rows %}
-<div class="sectionbox mdcard" style="padding:12px 16px" data-fail="{{ r.fail_ids|join(',') }}" data-stale="{{ 1 if r.stale else 0 }}">
-  <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">
-    <div><a href="{{ r.issue.url }}" target="_blank"><b>{{ r.issue.key }}</b></a> {{ r.issue.summary }}</div>
-    <div>{% if r.active %}<span class="pill ok" title="Active status — currently being worked">⚡ active</span> {% endif %}{% if r.stale %}<span class="pill bad" title="No status change in {{ r.stale_days }} days">⏳ stale {{ r.stale_days|round|int }}d</span> {% endif %}<span class="pill">{{ r.issue.type }}</span> <span class="pill">{{ r.issue.status }}</span></div>
+<div class="md-card mdcard {{ 'clean' if r.fails == 0 else 'attention' }}" data-fail="{{ r.fail_ids|join(',') }}" data-stale="{{ 1 if r.stale else 0 }}">
+  <div class="md-head">
+    <div class="md-title"><a href="{{ r.issue.url }}" target="_blank">{{ r.issue.key }}</a> {{ r.issue.summary }}</div>
+    <div class="md-tags">
+      {% if r.active %}<span class="pill ok" title="You're working on this now">⚡ active</span>{% endif %}
+      {% if r.stale %}<span class="pill bad" title="No status change in {{ r.stale_days }} days">⏳ stale {{ r.stale_days|round|int }}d</span>{% endif %}
+      <span class="pill">{{ r.issue.type }}</span>
+      <span class="pill">{{ r.issue.status }}</span>
+    </div>
   </div>
-  <div style="margin-top:8px">
+  <div class="md-checks">
   {% for cid, label, state, why in r.checks %}
-    <span class="checkrow c-{{ state }}" title="{{ why }}">{{ '✓' if state=='pass' else ('✗' if state=='fail' else '—') }} {{ label }}</span>
+    <span class="check c-{{ state }}" title="{{ why }}">{{ '✓' if state=='pass' else ('✕' if state=='fail' else '–') }} {{ label }}</span>
   {% endfor %}
   </div>
 </div>
 {% else %}<p class="muted">Nothing on the checklist — no open tickets for this developer.</p>{% endfor %}
 </div>
-<p class="muted" id="mdEmpty" style="display:none">No tickets fail that check. 🎉</p>
+<p class="muted" id="mdEmpty" style="display:none">No tickets match that filter. 🎉</p>
 <script>
 (function(){
   var cards=[].slice.call(document.querySelectorAll('.mdcard'));

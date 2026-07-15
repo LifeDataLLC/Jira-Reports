@@ -25,13 +25,13 @@ SHELL = """
  h1{font-size:20px;margin:0 0 4px}.sub{color:#6b778c;font-size:13px;margin-bottom:18px}
  label{display:block;font-size:12px;color:#5e6c84;margin:12px 0 3px}
  input,select{width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid #dfe1e6;border-radius:6px;font-size:14px}
- input:focus,select:focus{outline:none;border-color:#4c9aff;box-shadow:0 0 0 2px rgba(76,154,255,.25)}
- .btn{margin-top:18px;width:100%;background:#0052cc;color:#fff;border:none;border-radius:6px;padding:11px;font-size:14px;font-weight:600;cursor:pointer}
- .btn:hover{background:#0747a6}
+ input:focus,select:focus{outline:none;border-color:#1fa963;box-shadow:0 0 0 3px rgba(31,169,99,.18)}
+ .btn{margin-top:18px;width:100%;background:#1fa963;color:#fff;border:none;border-radius:6px;padding:11px;font-size:14px;font-weight:600;cursor:pointer}
+ .btn:hover{background:#17864e}
  .err{background:#ffebe6;color:#bf2600;border-radius:6px;padding:9px 12px;font-size:13px;margin-bottom:6px}
  .warn{background:#fff7e6;color:#974f00;border-radius:6px;padding:9px 12px;font-size:13px;margin:10px 0}
  .muted{color:#6b778c;font-size:12px;margin-top:14px}
- a{color:#0052cc;text-decoration:none}
+ a{color:#17864e;text-decoration:none}
 </style>
 """
 

@@ -64,7 +64,7 @@ LOADING_OVERLAY = """
  #loadingOverlay .lo-box{text-align:center;background:#fff;padding:30px 42px;border-radius:12px;
    box-shadow:0 6px 24px rgba(9,30,66,.18)}
  #loadingOverlay .lo-spinner{width:44px;height:44px;margin:0 auto 16px;border:4px solid #dfe7f5;
-   border-top-color:#0052cc;border-radius:50%;animation:lo-spin .8s linear infinite}
+   border-top-color:#1fa963;border-radius:50%;animation:lo-spin .8s linear infinite}
  #loadingOverlay .lo-text{font-size:16px;font-weight:600;color:#172b4d}
  #loadingOverlay .lo-sub{font-size:13px;color:#6b778c;margin-top:4px}
  @keyframes lo-spin{to{transform:rotate(360deg)}}
@@ -97,9 +97,9 @@ LOADING_OVERLAY = """
 TOP = """
 <style>
  body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;margin:0;color:#172b4d;background:#f4f5f7}
- nav{background:#0747a6;padding:10px 20px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
- nav a{color:#dbe7ff;text-decoration:none;font-size:13px;padding:5px 10px;border-radius:5px}
- nav a:hover,nav a.active{background:#fff;color:#0747a6}
+ nav{background:#212121;padding:10px 20px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+ nav a{color:#c9cbc9;text-decoration:none;font-size:13px;padding:5px 10px;border-radius:5px}
+ nav a:hover,nav a.active{background:#fff;color:#212121}
  nav .brand{color:#fff;font-weight:700;margin-right:10px}
  .wrap{max-width:1150px;margin:22px auto;padding:0 20px}
  h1{font-size:20px;margin:0 0 4px}.sub{color:#6b778c;font-size:13px;margin-bottom:18px}
@@ -111,7 +111,7 @@ TOP = """
  table{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(9,30,66,.12);margin-bottom:8px}
  th,td{text-align:left;padding:9px 13px;border-bottom:1px solid #ebecf0;font-size:13px}
  th{background:#fafbfc;color:#6b778c}tr:hover td{background:#f7f8fa}
- a{color:#0052cc;text-decoration:none}a:hover{text-decoration:underline}
+ a{color:#1fa963;text-decoration:none}a:hover{text-decoration:underline}
  .pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;background:#dfe1e6}
  .warn{background:#ffebe6;color:#bf2600}.ok{background:#e3fcef;color:#006644}
  .muted{color:#6b778c;font-size:12px}

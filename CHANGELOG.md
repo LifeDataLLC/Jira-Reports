@@ -153,3 +153,12 @@
 - Tickets get a "⏳ stale Nd" mark on My Day when their status hasn't changed in
   `stale_days` days (Settings-configurable, default 10). Added a "Stale" quick
   filter. Distinct from Attention "Aging" (per-status threshold).
+
+### Redesign: My Day + LifeData brand colors
+- App recolored to LifeData palette (green #1fa963 / off-black #212121 / white).
+  Dark nav with green active tab; green buttons/links/focus; brand wordmark
+  "LifeData. Reports" with green dot. Applied to v3 chrome, login/register, and
+  the legacy report/dev-drilldown chromes.
+- My Day redesigned: a summary bar (progress + "X of Y up to date", need-attention/
+  stale/active counts); cleaner ticket cards with a left accent (green=clean,
+  red=needs action) and pill-style pass/fail/na check badges.
