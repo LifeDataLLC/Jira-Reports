@@ -145,7 +145,7 @@ def my_day(issues, developer, day: dt.date, match, now=None) -> dict:
 
 def rollup(issues, day: dt.date, now=None) -> dict:
     """Admin roll-up (FR-M4): % of tickets in an ACTIVE or PAUSED status with an
-    EOD signal on `day`, per developer and overall. Active = one of the 5 blue
+    EOD signal on `day`, per developer and overall. Active = one of the blue
     "currently working" statuses; paused counts because pausing at end of day is
     itself the signal. Queue states (To Do, Ready for QA, etc.) are excluded —
     nobody is actively working them."""

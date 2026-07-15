@@ -256,7 +256,7 @@ SETTINGS_TMPL = """
   <button class="btn-ghost" name="load_workflow" value="1" type="submit"
     onclick="return confirm('Overwrite the status classification, thresholds, and active-status lanes with the LIFEDATAV2 workflow defaults? Your other settings are kept.')">
     ↻ Load LIFEDATAV2 workflow defaults</button>
-  <span class="muted">maps every workflow status to a bucket, sets the 5 active lanes + pauses, and enables worklog/due-date rules</span>
+  <span class="muted">maps every workflow status to a bucket, sets the active-work lanes + pauses, and enables worklog/due-date rules</span>
 </form>
 <form method="post">
 <div class="sectionbox">
@@ -282,7 +282,7 @@ SETTINGS_TMPL = """
       <td><input type="number" step="0.5" min="0" name="threshold__{{ status }}"
                  value="{{ thresholds.get(status, '') }}" placeholder="{{ bucket_default(status) }}" style="width:80px"></td>
       <td>{% if status in unmapped %}<span class="pill bad">needs classification</span>{% endif %}
-        {% if status in s.active_statuses %}<span class="pill ok" title="Active work status — one at a time per lane; pause at end of day">⚡ active · {{ s.active_statuses[status].lane }} → {{ s.active_statuses[status].pause }}</span>{% endif %}</td>
+        {% if status in s.active_statuses %}<span class="pill ok" title="Active work status — one at a time per lane; pause at end of day">⚡ active · {{ s.active_statuses[status].lane }}{% if s.active_statuses[status].pause %} → {{ s.active_statuses[status].pause }}{% endif %}</span>{% endif %}</td>
     </tr>
     {% endfor %}
   </table>
@@ -582,7 +582,7 @@ ROLLUP_TMPL = """
 <div class="cards">
   <div class="card"><div class="n">{{ d.pct }}%</div><div class="l">In active/paused status with an EOD signal ({{ d.signaled }}/{{ d.total }})</div></div>
 </div>
-<p class="muted"><b>Active</b> = currently in one of the 5 working statuses (In Progress, Development, or a testing lane) — someone is working on it now. Paused counts because pausing at end of day is itself the signal. Queue statuses (To Do, Ready for QA, …) are excluded.</p>
+<p class="muted"><b>Active</b> = currently in a blue working status (investigation, development, review, or a testing lane) — someone is working on it now. Paused counts because pausing at end of day is itself the signal. Queue statuses (To Do, Ready for QA, …) are excluded.</p>
 <table>
 <tr><th>Developer</th><th>In active/paused status</th><th>With EOD signal</th><th>%</th></tr>
 {% for r in d.rows %}

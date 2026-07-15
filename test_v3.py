@@ -15,6 +15,7 @@ os.environ.setdefault("SNAPSHOT_DB_PATH", os.path.join(_tmp, "snapshots.db"))
 
 import analytics as A  # noqa: E402
 import settings as st  # noqa: E402
+import workflow as wf  # noqa: E402
 
 now = A.now_utc()
 PASSED = 0
@@ -52,7 +53,10 @@ def test_settings():
     check("workflow enables worklog+due gates",
           fresh["gates"]["worklogs_required"] and fresh["gates"]["due_dates_required"])
     check("other gates off", not fresh["gates"]["sprints_enabled"] and not fresh["gates"]["estimates_used"])
-    check("active statuses seeded", len(fresh["active_statuses"]) == 5)
+    check("active statuses seeded", len(fresh["active_statuses"]) == len(wf.ACTIVE)
+          and all(s in fresh["active_statuses"] for s in
+                  ("Development / In Design", "Investigation", "Customer Feedback",
+                   "Review and Testing", "In QA Testing (QA Env)")))
     check("active lane + pause", fresh["active_statuses"]["In QA Testing (QA Env)"]["lane"] == "qa"
           and fresh["active_statuses"]["In QA Testing (QA Env)"]["pause"] == "Pause QA Testing")
 
