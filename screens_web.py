@@ -492,7 +492,7 @@ MYDAY_TMPL = """
 {% for r in d.rows %}
 <div class="md-card mdcard {{ 'clean' if r.fails == 0 else 'attention' }}" data-fail="{{ r.fail_ids|join(',') }}" data-stale="{{ 1 if r.stale else 0 }}">
   <div class="md-head">
-    <div class="md-title"><a href="{{ r.issue.url }}" target="_blank">{{ r.issue.key }}</a> {{ r.issue.summary }}</div>
+    <div class="md-title"><a href="{{ r.issue.url }}" target="_blank">{{ r.issue.key }}</a> {{ r.issue.summary }}{% if r.last_activity_str %} <span class="muted" style="font-weight:400">· {{ r.last_activity_str }}</span>{% endif %}</div>
     <div class="md-tags">
       {% if r.active %}<span class="pill ok" title="You're working on this now">⚡ active</span>{% endif %}
       {% if r.stale %}<span class="pill bad" title="No status change in {{ r.stale_days }} days">⏳ stale {{ r.stale_days|round|int }}d</span>{% endif %}

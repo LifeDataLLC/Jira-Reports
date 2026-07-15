@@ -33,6 +33,17 @@ def _day_bounds(day: dt.date):
     return d0, d0 + dt.timedelta(days=1)
 
 
+def _ago(ts, now=None) -> str:
+    if not ts:
+        return ""
+    secs = ((now or A.now_utc()) - ts).total_seconds()
+    if secs < 3600:
+        return f"{max(int(secs // 60), 1)}m ago"
+    if secs < 86400:
+        return f"{int(secs // 3600)}h ago"
+    return f"{int(secs // 86400)}d ago"
+
+
 def _days_in_current_status(issue, now=None):
     entered = issue.status_events[-1][0] if issue.status_events else issue.created
     if not entered:
@@ -93,10 +104,15 @@ def evaluate_ticket(issue, day: dt.date, now=None) -> dict:
     dsc = _days_in_current_status(issue, now)
     stale = dsc is not None and dsc >= s.get("stale_days", 10)
 
+    # Most recent action of any kind (status change incl. a handoff by another
+    # developer, comment, worklog, field change) — drives the My Day ordering.
+    last_activity = events[-1].ts if events else (issue.updated or issue.created)
+
     eod_signal = bool(today_events)
     return {"issue": issue, "bucket": bucket, "checks": checks,
             "active": st.is_active_status(issue.status),
             "stale": stale, "stale_days": round(dsc, 1) if dsc is not None else None,
+            "last_activity": last_activity, "last_activity_str": _ago(last_activity, now),
             "fails": sum(1 for _c, _l, state, _w in checks if state == "fail"),
             "fail_ids": [c for c, _l, state, _w in checks if state == "fail"],
             "eod_signal": eod_signal}
@@ -117,7 +133,9 @@ def my_day(issues, developer, day: dt.date, match, now=None) -> dict:
         if developer and match and not match(developer, i.assignee, i.assignee_id):
             continue
         rows.append(evaluate_ticket(i, day, now))
-    rows.sort(key=lambda r: (-r["fails"], r["issue"].key))
+    # Most recent action first (handoff by anyone, or the developer's own work).
+    _min = dt.datetime.min.replace(tzinfo=dt.timezone.utc)
+    rows.sort(key=lambda r: r["last_activity"] or _min, reverse=True)
     return {"rows": rows, "day": day,
             "total_fails": sum(r["fails"] for r in rows)}
 
