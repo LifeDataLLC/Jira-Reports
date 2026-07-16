@@ -51,9 +51,12 @@ app.secret_key = auth.secret_key()
 app.permanent_session_lifetime = __import__("datetime").timedelta(days=14)
 app.register_blueprint(auth_web.authbp)
 
-# Warm the Jira cache in the background at startup so the first page after a
-# (re)start or deploy is served from memory instead of blocking on a live pull.
+# Warm the Jira cache at startup so the first page after a (re)start or deploy
+# is served from memory instead of blocking on a live pull: seed synchronously
+# from the last persisted fetches on disk (fast — a JSON read), then refresh
+# from Jira in the background.
 if os.environ.get("JIRA_API_TOKEN") and jc.CACHE_TTL > 0:
+    jc.load_disk_cache()
     threading.Thread(target=jc.warm_cache, daemon=True).start()
 
 # Paths reachable without a login (the scheduled snapshot job hits /tasks/snapshot).

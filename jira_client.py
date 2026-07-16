@@ -16,14 +16,24 @@ from __future__ import annotations
 
 import datetime as dt
 import functools
+import json
 import os
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from statistics import mean, median
 from typing import Any
 
 import requests
+
+# One shared session for every Jira call: connection pooling means each request
+# reuses an open TLS connection instead of paying a fresh TCP+TLS handshake —
+# a full data pull is dozens of paged calls, so this adds up. urllib3's pool is
+# thread-safe, so the parallel top-ups below can share it too.
+_session = requests.Session()
+_session.mount("https://", requests.adapters.HTTPAdapter(pool_connections=10,
+                                                         pool_maxsize=20))
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +78,62 @@ _cache_store: dict[Any, tuple[float, Any]] = {}
 _refreshing: set[Any] = set()
 _cached_fns: dict[str, Any] = {}
 
+# ---- disk persistence: survive restarts/deploys -------------------------
+# Every successful fetch is also written to data_dir()/jira_cache.json (all
+# results are plain JSON from the Jira API). load_disk_cache() reads it back at
+# startup and seeds the in-memory cache — the entries are stale by then, so the
+# stale-while-revalidate path serves them instantly while a refresh runs behind.
+_persist_lock = threading.Lock()
+
+
+def _cache_file() -> str:
+    import settings as st
+    return os.path.join(st.data_dir(), "jira_cache.json")
+
+
+def _persist_entry(key, ts, result) -> None:
+    """Write/replace one entry in the on-disk cache (atomic, best-effort)."""
+    try:
+        fn_name, args, kwargs = key[0], list(key[1]), [list(kv) for kv in key[2]]
+        with _persist_lock:
+            try:
+                with open(_cache_file()) as fh:
+                    disk = json.load(fh)
+            except (OSError, ValueError):
+                disk = {"entries": []}
+            disk["entries"] = [e for e in disk.get("entries", [])
+                               if not (e.get("fn") == fn_name and e.get("args") == args
+                                       and e.get("kwargs") == kwargs)]
+            disk["entries"].append({"fn": fn_name, "args": args, "kwargs": kwargs,
+                                    "ts": ts, "result": result})
+            path = _cache_file()
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w") as fh:
+                json.dump(disk, fh)
+            os.replace(tmp, path)
+    except Exception:
+        pass  # persistence is best-effort; the in-memory cache is unaffected
+
+
+def load_disk_cache() -> None:
+    """Seed the in-memory cache from the last persisted fetches, so the first
+    pages after a restart/deploy serve instantly (stale, refreshed behind)."""
+    try:
+        with open(_cache_file()) as fh:
+            disk = json.load(fh)
+    except (OSError, ValueError):
+        return
+    with _cache_lock:
+        for e in disk.get("entries", []):
+            try:
+                key = (e["fn"], tuple(e["args"]),
+                       tuple((k, v) for k, v in e["kwargs"]))
+                if key not in _cache_store:
+                    _cache_store[key] = (float(e["ts"]), e["result"])
+            except (KeyError, TypeError, ValueError):
+                continue
+
 
 def _refresh_async(fn, args, kwargs, key):
     """Refresh one cache entry in a daemon thread (at most one per key)."""
@@ -79,8 +145,10 @@ def _refresh_async(fn, args, kwargs, key):
     def run():
         try:
             result = fn(*args, **kwargs)
+            ts = time.time()
             with _cache_lock:
-                _cache_store[key] = (time.time(), result)
+                _cache_store[key] = (ts, result)
+            _persist_entry(key, ts, result)
         except Exception:
             pass  # keep serving the stale value; try again next request
         finally:
@@ -113,16 +181,27 @@ def _cached(fn):
                 _refresh_async(fn, args, kwargs, key)  # serve stale, refresh behind
             return hit[1]
         result = fn(*args, **kwargs)  # cold cache: must fetch synchronously
+        ts = time.time()
         with _cache_lock:
-            _cache_store[key] = (time.time(), result)
+            _cache_store[key] = (ts, result)
+        # persist off-thread so the waiting request isn't delayed by disk I/O
+        threading.Thread(target=_persist_entry, args=(key, ts, result),
+                         daemon=True).start()
         return result
     return wrapper
 
 
 def clear_cache() -> None:
-    """Drop all cached fetches (e.g. to force a fresh pull)."""
+    """Drop all cached fetches, memory AND disk (e.g. to force a fresh pull —
+    the disk file must go too, or a restart would resurrect data fetched under
+    old settings such as a different project selection)."""
     with _cache_lock:
         _cache_store.clear()
+    try:
+        with _persist_lock:
+            os.remove(_cache_file())
+    except OSError:
+        pass
 
 
 def warm_cache() -> None:
@@ -157,7 +236,7 @@ def _post_with_retry(url, body, attempts=3):
     """FR-D6: respect rate limits — retry on 429/5xx with backoff (Retry-After
     honored when present)."""
     for i in range(attempts):
-        resp = requests.post(url, json=body, auth=_auth(),
+        resp = _session.post(url, json=body, auth=_auth(),
                              headers={"Accept": "application/json"}, timeout=60)
         if resp.status_code not in (429, 500, 502, 503, 504) or i == attempts - 1:
             return resp
@@ -256,7 +335,7 @@ def detect_custom_fields() -> dict:
     except Exception:
         st = None
     try:
-        resp = requests.get(f"{JIRA_BASE_URL}/rest/api/3/field", auth=_auth(),
+        resp = _session.get(f"{JIRA_BASE_URL}/rest/api/3/field", auth=_auth(),
                             headers={"Accept": "application/json"}, timeout=60)
         if resp.ok:
             for f in resp.json():
@@ -283,7 +362,7 @@ def detect_custom_fields() -> dict:
 def _fetch_all_pages(url: str, list_key: str) -> list[dict]:
     out, start = [], 0
     while True:
-        r = requests.get(url, params={"startAt": start, "maxResults": 100},
+        r = _session.get(url, params={"startAt": start, "maxResults": 100},
                          auth=_auth(), headers={"Accept": "application/json"}, timeout=60)
         if not r.ok:
             break
@@ -319,12 +398,12 @@ def fetch_dev_dataset(project: str | None = None, lookback_days: int | None = No
     # Top up truncated comment/worklog lists (search returns a capped page), but
     # only for recently-updated issues — a page load blocks on these extra calls,
     # and the "comment today"/EOD checks only look at recent activity, so there's
-    # no reason to fully page the history of tickets untouched for weeks.
+    # no reason to fully page the history of tickets untouched for weeks. The
+    # top-ups are independent per-issue GETs, so they run in parallel.
     cutoff = (now_utc().date() - dt.timedelta(days=TOPUP_DAYS)).isoformat()
-    for raw in issues:
+
+    def _top_up(raw):
         f = raw.get("fields", {})
-        if (f.get("updated") or "")[:10] < cutoff:
-            continue
         c = f.get("comment") or {}
         if c.get("total", 0) > len(c.get("comments", [])):
             f["comment"] = {"comments": _fetch_all_pages(
@@ -333,6 +412,12 @@ def fetch_dev_dataset(project: str | None = None, lookback_days: int | None = No
         if w.get("total", 0) > len(w.get("worklogs", [])):
             f["worklog"] = {"worklogs": _fetch_all_pages(
                 f"{JIRA_BASE_URL}/rest/api/3/issue/{raw['key']}/worklog", "worklogs")}
+
+    recent = [raw for raw in issues
+              if (raw.get("fields", {}).get("updated") or "")[:10] >= cutoff]
+    if recent:
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            list(ex.map(_top_up, recent))
     return issues
 
 
@@ -340,7 +425,7 @@ def fetch_single_issue(key: str) -> dict | None:
     """Uncached full fetch of one issue (fields + complete changelog + comments +
     worklogs) for the Ticket Investigator — always fresh, whole history."""
     url = f"{JIRA_BASE_URL}/rest/api/3/issue/{key}"
-    r = requests.get(url, params={"expand": "changelog"}, auth=_auth(),
+    r = _session.get(url, params={"expand": "changelog"}, auth=_auth(),
                      headers={"Accept": "application/json"}, timeout=60)
     if not r.ok:
         return None
@@ -365,7 +450,7 @@ def list_projects() -> list[dict]:
     try:
         start = 0
         while True:
-            r = requests.get(f"{JIRA_BASE_URL}/rest/api/3/project/search",
+            r = _session.get(f"{JIRA_BASE_URL}/rest/api/3/project/search",
                              params={"maxResults": 100, "startAt": start},
                              auth=_auth(), headers={"Accept": "application/json"}, timeout=60)
             if not r.ok:
@@ -386,7 +471,7 @@ def fetch_project_versions() -> list[dict]:
     out = []
     for p in configured_projects():
         url = f"{JIRA_BASE_URL}/rest/api/3/project/{p.strip()}/versions"
-        resp = requests.get(url, auth=_auth(), headers={"Accept": "application/json"},
+        resp = _session.get(url, auth=_auth(), headers={"Accept": "application/json"},
                             timeout=60)
         if resp.ok:
             out.extend(resp.json())
@@ -409,13 +494,13 @@ def fetch_active_sprints() -> list[dict]:
     board_ids = _st.load().get("board_ids") or []
     for board_id in board_ids:
         s_url = f"{JIRA_BASE_URL}/rest/agile/1.0/board/{board_id}/sprint?state=active"
-        r = requests.get(s_url, auth=_auth(), headers={"Accept": "application/json"},
+        r = _session.get(s_url, auth=_auth(), headers={"Accept": "application/json"},
                          timeout=60)
         if not r.ok:
             continue
         for sp in r.json().get("values", []):
             i_url = f"{JIRA_BASE_URL}/rest/agile/1.0/sprint/{sp['id']}/issue?maxResults=200"
-            ir = requests.get(i_url, auth=_auth(), headers={"Accept": "application/json"},
+            ir = _session.get(i_url, auth=_auth(), headers={"Accept": "application/json"},
                               timeout=60)
             sp["issues"] = ir.json().get("issues", []) if ir.ok else []
             sprints.append(sp)
@@ -428,7 +513,7 @@ def get_changelog(issue_key: str) -> list[dict]:
     histories: list[dict] = []
     start_at = 0
     while True:
-        resp = requests.get(url, params={"startAt": start_at, "maxResults": 100},
+        resp = _session.get(url, params={"startAt": start_at, "maxResults": 100},
                             auth=_auth(), headers={"Accept": "application/json"}, timeout=60)
         resp.raise_for_status()
         data = resp.json()
