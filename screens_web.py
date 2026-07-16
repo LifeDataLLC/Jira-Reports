@@ -426,7 +426,6 @@ GATE_LABELS = [
 CHECK_LABELS = [
     ("status_mapped", "Status classified"), ("comment_today", "Comment today"),
     ("due_date", "Due date present (gated)"), ("has_release", "Belongs to a release"),
-    ("not_over_threshold", "Not over aging threshold"),
 ]
 
 
@@ -527,7 +526,7 @@ def settings_screen():
 
 MYDAY_TMPL = """
 <h1>My Day</h1>
-<div class="sub">Your open tickets — clear the red items before you sign off{% if is_admin %} · <a href="/my-day/rollup?{{ request.query_string.decode() }}">team roll-up</a> · <a href="/my-day/feed?{{ request.query_string.decode() }}">activity feed</a>{% endif %}</div>
+<div class="sub">Tickets last touched on the chosen day, plus everything you're actively working on — clear the red items before you sign off{% if is_admin %} · <a href="/my-day/rollup?{{ request.query_string.decode() }}">team roll-up</a> · <a href="/my-day/feed?{{ request.query_string.decode() }}">activity feed</a>{% endif %}</div>
 <form method="get" class="filterbar">
   <label>Project
     <select name="project" onchange="this.form.submit()">
@@ -572,7 +571,7 @@ MYDAY_TMPL = """
 <div id="mdCards">
 {% for r in d.rows %}
 <div class="md-card mdcard {{ 'clean' if r.fails == 0 else 'attention' }}{{ ' active-now' if r.active else '' }}" data-fail="{{ r.fail_ids|join(',') }}" data-stale="{{ 1 if r.stale else 0 }}" data-active="{{ 1 if r.active else 0 }}">
-  {% if r.active %}<span class="md-ribbon"><span class="live"></span>⚡ Working now{% if r.lane %} · {{ r.lane }}{% endif %}</span>{% endif %}
+  {% if r.active %}<span class="md-ribbon"><span class="live"></span>⚡ Working now{% if r.lane %} · {{ r.lane }}{% endif %}{% if r.active_for %} · active {{ r.active_for }}{% endif %}</span>{% endif %}
   <div class="md-head">
     <div class="md-title"><a href="{{ r.issue.url }}" target="_blank">{{ r.issue.key }}</a> {{ r.issue.summary }}{% if r.last_activity_str %} <span class="muted" style="font-weight:400">· {{ r.last_activity_str }}</span>{% endif %}</div>
     <div class="md-tags">

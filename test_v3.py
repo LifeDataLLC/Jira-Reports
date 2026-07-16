@@ -154,8 +154,9 @@ def test_checklist():
     good = mkraw("C-1", "Ready for QA (QA Env)", "In Progress", events=[
         (0, "Jane Doe", "status", "Development / In Design", "Ready for QA (QA Env)")],
         comments=[(0, 30, "Jane Doe", "handoff: steps to test")])
-    # Active ticket, silent today, unmapped status
-    bad = mkraw("C-2", "Mystery Status", "In Progress")
+    # Unmapped in-progress status, moved today (so it passes the My Day date filter)
+    bad = mkraw("C-2", "Mystery Status", "In Progress",
+                events=[(0, "Jane Doe", "status", "To Do", "Mystery Status")])
     issues = dr.load_dev_issues([good, bad])
 
     d = checklist.my_day(issues, "jane", today, dr._dev_match, now=now)
@@ -164,8 +165,9 @@ def test_checklist():
     check("comment today pass", g["comment_today"] == "pass")
     check("status mapped pass", g["status_mapped"] == "pass")
     check("removed checks gone", "worklog_today" not in g and "handoff_comment" not in g
-          and "eod_pause" not in g and "start_date" not in g and "blocked_reason" not in g)
-    check("kept 5 checks", set(g) == {"status_mapped","comment_today","due_date","has_release","not_over_threshold"})
+          and "eod_pause" not in g and "start_date" not in g and "blocked_reason" not in g
+          and "not_over_threshold" not in g)
+    check("kept 4 checks", set(g) == {"status_mapped", "comment_today", "due_date", "has_release"})
     b = dict((c[0], c[2]) for c in rows["C-2"]["checks"])
     check("unmapped status fails", b["status_mapped"] == "fail")
     check("no comment fails", b["comment_today"] == "fail")

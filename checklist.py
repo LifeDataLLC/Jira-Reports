@@ -16,15 +16,13 @@ import activity
 import analytics as A
 import settings as st
 
-CHECK_ORDER = ["status_mapped", "comment_today", "due_date", "has_release",
-               "not_over_threshold"]
+CHECK_ORDER = ["status_mapped", "comment_today", "due_date", "has_release"]
 
 CHECK_LABELS = {
     "status_mapped": "Status classified",
     "comment_today": "Comment today",
     "due_date": "Due date set",
     "has_release": "Belongs to a release",
-    "not_over_threshold": "Within aging threshold",
 }
 
 
@@ -42,6 +40,20 @@ def _ago(ts, now=None) -> str:
     if secs < 86400:
         return f"{int(secs // 3600)}h ago"
     return f"{int(secs // 86400)}d ago"
+
+
+def _dur(days) -> str:
+    """A span of days as a short duration: '45m', '3h', '2d 4h'."""
+    if days is None:
+        return ""
+    hours = days * 24
+    if hours < 1:
+        return f"{max(int(round(hours * 60)), 1)}m"
+    if hours < 24:
+        return f"{int(round(hours))}h"
+    d = int(hours // 24)
+    h = int(round(hours - d * 24))
+    return f"{d}d {h}h" if h else f"{d}d"
 
 
 def _days_in_current_status(issue, now=None):
@@ -91,27 +103,22 @@ def evaluate_ticket(issue, day: dt.date, now=None) -> dict:
         (", ".join(issue.fix_versions)) if issue.has_release
         else "not assigned to a feature/bug/backlog release")
 
-    thr = st.threshold_for(issue.status)
-    days_in = _days_in_current_status(issue, now)
-    if thr is None or days_in is None:
-        add("not_over_threshold", "na", "no threshold for this status")
-    else:
-        over = days_in - thr
-        add("not_over_threshold", "pass" if over <= 0 else "fail",
-            f"{days_in:.1f}d in status (limit {thr:g}d)" if over > 0 else "")
-
-    # "Stale" = no status change in `stale_days` days (time in current status).
+    # Time in the current status: drives "stale" and, for active tickets, the
+    # "how long it's been active" readout on the card.
     dsc = _days_in_current_status(issue, now)
     stale = dsc is not None and dsc >= s.get("stale_days", 10)
+    active = st.is_active_status(issue.status)
 
     # Most recent action of any kind (status change incl. a handoff by another
-    # developer, comment, worklog, field change) — drives the My Day ordering.
+    # developer, comment, worklog, field change) — drives the My Day ordering
+    # and the date filter.
     last_activity = events[-1].ts if events else (issue.updated or issue.created)
 
     eod_signal = bool(today_events)
     return {"issue": issue, "bucket": bucket, "checks": checks,
-            "active": st.is_active_status(issue.status),
+            "active": active,
             "lane": st.lane_label(issue.status),
+            "active_for": _dur(dsc) if (active and dsc is not None) else "",
             "stale": stale, "stale_days": round(dsc, 1) if dsc is not None else None,
             "last_activity": last_activity, "last_activity_str": _ago(last_activity, now),
             "fails": sum(1 for _c, _l, state, _w in checks if state == "fail"),
@@ -120,9 +127,15 @@ def evaluate_ticket(issue, day: dt.date, now=None) -> dict:
 
 
 def my_day(issues, developer, day: dt.date, match, now=None) -> dict:
-    """Checklist rows for one developer's open, assigned
-    work: anything in an active status (currently working), paused, in the QA
-    pipeline, or reopened. To Do and Done are excluded."""
+    """Checklist rows for one developer's open, assigned work: anything in an
+    active status (currently working), paused, in the QA pipeline, or reopened.
+    To Do and Done are excluded.
+
+    The rows are filtered to those whose most recent action (comment, status
+    change, worklog, …) happened on `day` — EXCEPT tickets in an active status,
+    which are always shown because they're what's being worked right now, even if
+    they went active on an earlier day."""
+    d0, d1 = _day_bounds(day)
     rows = []
     for i in issues:
         b = st.bucket_of(i.status, i.category)
@@ -133,7 +146,10 @@ def my_day(issues, developer, day: dt.date, match, now=None) -> dict:
             continue
         if developer and match and not match(developer, i.assignee, i.assignee_id):
             continue
-        rows.append(evaluate_ticket(i, day, now))
+        r = evaluate_ticket(i, day, now)
+        if not (r["active"] or (r["last_activity"] and d0 <= r["last_activity"] < d1)):
+            continue
+        rows.append(r)
     # Tickets in an active status ("currently working") are pinned to the top;
     # within each group, most recent action first (a handoff by anyone, or the
     # developer's own work).
