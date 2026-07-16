@@ -11,6 +11,7 @@ presentation and wiring only.
 from __future__ import annotations
 
 import datetime as dt
+import secrets
 
 from flask import Blueprint, Response, jsonify, redirect, render_template_string, request
 
@@ -127,7 +128,7 @@ document.addEventListener('click',function(ev){
   Array.prototype.forEach.call(header.children,function(h){h.removeAttribute('data-dir');
     var i=h.querySelector('.sort-ind'); if(i)i.remove();});
   th.setAttribute('data-dir',asc?'asc':'desc');
-  var ind=document.createElement('span'); ind.className='sort-ind'; ind.style.color='#0052cc';
+  var ind=document.createElement('span'); ind.className='sort-ind'; ind.style.color='#1fa963';
   ind.style.fontSize='10px'; ind.textContent=asc?' ▲':' ▼'; th.appendChild(ind);
   var rows=Array.prototype.slice.call(table.querySelectorAll('tr')).filter(function(r){
     return r!==header && !r.querySelector('td[colspan]');});
@@ -415,7 +416,8 @@ def settings_screen():
             s["checklist_items"][c] = f"check__{c}" in form
         for num_key in ("handoff_window_hours", "silent_days", "gap_days", "stale_days"):
             try:
-                s[num_key] = max(int(form.get(num_key) or s[num_key]), 0)
+                # min 1: zero would mark EVERY ticket silent/stale (x >= 0 is always true)
+                s[num_key] = max(int(form.get(num_key) or s[num_key]), 1)
             except ValueError:
                 pass
         for list_key in ("pr_keywords", "blocked_labels", "board_ids"):
@@ -1038,7 +1040,7 @@ FLOW_TMPL = """
 {% for b in bneck[:12] %}
 <tr><td>{{ b.status }}</td><td><span class="pill">{{ b.bucket }}</span></td>
 <td>{{ b.median_days }}</td><td>{{ b.p85_days }}</td><td>{{ b.n }}</td>
-<td><div style="background:#dfe7f5;border-radius:4px;height:10px;width:100%;max-width:220px"><div style="background:#0052cc;border-radius:4px;height:10px;width:{{ (100 * b.median_days / bneck[0].median_days)|round|int if bneck else 0 }}%"></div></div></td></tr>
+<td><div style="background:#e7e8e7;border-radius:4px;height:10px;width:100%;max-width:220px"><div style="background:#1fa963;border-radius:4px;height:10px;width:{{ (100 * b.median_days / bneck[0].median_days)|round|int if bneck else 0 }}%"></div></div></td></tr>
 {% else %}<tr><td colspan="6" class="muted">No stage data.</td></tr>{% endfor %}
 </table>
 
@@ -1150,7 +1152,7 @@ QUALITY_TMPL = """
 <tr><th>Week</th><th>Handoffs</th><th>Returns</th><th>Return rate</th><th></th></tr>
 {% for w in trend %}
 <tr><td>{{ w.week }}</td><td>{{ w.handoffs }}</td><td>{{ w.returns }}</td><td>{{ w.rate_label }}</td>
-<td><div style="background:#dfe7f5;border-radius:4px;height:10px;width:100%;max-width:200px"><div style="background:{{ '#de350b' if (w.rate_pct or 0) >= 50 else '#0052cc' }};border-radius:4px;height:10px;width:{{ w.rate_pct or 0 }}%"></div></div></td></tr>
+<td><div style="background:#e7e8e7;border-radius:4px;height:10px;width:100%;max-width:200px"><div style="background:{{ '#d64545' if (w.rate_pct or 0) >= 50 else '#1fa963' }};border-radius:4px;height:10px;width:{{ w.rate_pct or 0 }}%"></div></div></td></tr>
 {% else %}<tr><td colspan="5" class="muted">No handoffs recorded in the trend window.</td></tr>{% endfor %}
 </table>
 """
@@ -1208,7 +1210,8 @@ TRENDS_TMPL = """
 {% if not history %}
 <div class="sectionbox"><p class="muted"><b>No snapshots yet.</b> Trends need history: schedule a daily hit of
 <code>POST /tasks/snapshot</code> (Azure WebJob, Logic App, or cron). Each run stores the day's team
-aggregates in SQLite; week-over-week deltas appear after the first week.</p></div>
+aggregates in SQLite; week-over-week deltas appear after the first week.
+{% if snapshot_url %}<br>Use this exact URL (the token is required):<br><code>{{ snapshot_url }}</code>{% endif %}</p></div>
 {% else %}
 <h2>History</h2>
 <table>
@@ -1267,16 +1270,29 @@ def trends_screen():
         "silent": sum(1 for r in board["rows"] if any(x["kind"] == "silent" for x in r["reasons"])),
         "multi": len(fq.multiple_active(issues)),
     }
+    import auth
+    snapshot_url = (f"{request.url_root.rstrip('/')}/tasks/snapshot?token={auth.snapshot_token()}"
+                    if auth.is_admin() else None)  # only admins see the token
     return page(TRENDS_TMPL, active="/exec", metrics=metrics, history=sn.series(30),
-                meeting=meeting, dist=dist, show_banner=not meeting)
+                meeting=meeting, dist=dist, show_banner=not meeting,
+                snapshot_url=snapshot_url)
 
 
 @v3.route("/tasks/snapshot", methods=["GET", "POST"])
 def snapshot_task():
     """Scheduled endpoint (cron/WebJob): stores today's aggregate snapshot; with
-    ?digest=1 also posts the Teams morning digest (FR-U8)."""
+    ?digest=1 also posts the Teams morning digest (FR-U8).
+
+    Reachable without a login (schedulers can't sign in), so it requires the
+    shared token instead — otherwise anyone who guessed the URL could trigger
+    Jira pulls, overwrite snapshots, spam the Teams digest, and read team
+    aggregates. A logged-in admin may also call it (e.g. to test)."""
+    import auth
     import digest as dg
     import snapshots as sn
+    supplied = request.args.get("token") or request.headers.get("X-Snapshot-Token", "")
+    if not (secrets.compare_digest(supplied, auth.snapshot_token()) or auth.is_admin()):
+        return jsonify({"ok": False, "error": "missing or invalid token"}), 403
     issues = _issues(None)
     agg = sn.take(issues)
     sent = False

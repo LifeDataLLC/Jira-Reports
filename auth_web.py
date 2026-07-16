@@ -102,7 +102,11 @@ def login():
         u = auth.verify(email, request.form.get("password", ""))
         if u:
             auth.login_user(u)
-            return redirect(nxt if nxt.startswith("/") else "/")
+            # Same-site paths only: "//evil.com" starts with "/" but browsers
+            # treat it as protocol-relative → open redirect. Require exactly one
+            # leading slash.
+            safe = nxt.startswith("/") and not nxt.startswith("//") and "\\" not in nxt
+            return redirect(nxt if safe else "/")
         error = "Incorrect email or password."
     return render_template_string(LOGIN, error=error, nxt=nxt, email=email)
 

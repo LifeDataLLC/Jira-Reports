@@ -513,7 +513,13 @@ def test_auth():
     c = app.app.test_client()
     # unauthenticated -> redirect to login
     check("guard redirects to login", c.get("/attention").status_code == 302)
-    check("snapshot endpoint stays public", c.post("/tasks/snapshot").status_code in (200, 500))
+    # Snapshot endpoint needs no login (schedulers can't sign in) but DOES need
+    # the shared token — without it anyone could trigger pulls / spam the digest.
+    check("snapshot endpoint rejects missing token", c.post("/tasks/snapshot").status_code == 403)
+    check("snapshot endpoint rejects wrong token",
+          c.post("/tasks/snapshot?token=nope").status_code == 403)
+    check("snapshot endpoint accepts the token",
+          c.post(f"/tasks/snapshot?token={auth.snapshot_token()}").status_code in (200, 500))
     # first account is admin
     c.post("/register", data={"email": "boss@lifedatacorp.com", "password": "secret123"})
     check("first user is admin", auth.get_user("boss@lifedatacorp.com")["role"] == "admin")

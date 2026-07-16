@@ -49,6 +49,11 @@ import auth
 import auth_web
 app.secret_key = auth.secret_key()
 app.permanent_session_lifetime = __import__("datetime").timedelta(days=14)
+# Session-cookie hardening: SameSite=Lax stops cross-site form posts (CSRF) from
+# carrying the session; Secure on Azure where the app is always behind HTTPS
+# (not locally, where dev runs on plain http).
+app.config.update(SESSION_COOKIE_SAMESITE="Lax", SESSION_COOKIE_HTTPONLY=True,
+                  SESSION_COOKIE_SECURE=bool(os.environ.get("WEBSITE_SITE_NAME")))
 app.register_blueprint(auth_web.authbp)
 
 # Warm the Jira cache at startup so the first page after a (re)start or deploy

@@ -57,7 +57,20 @@ def secret_key() -> str:
     k = os.environ.get("SECRET_KEY") or os.environ.get("FLASK_SECRET_KEY")
     if k:
         return k
-    path = os.path.join(st.data_dir(), "secret_key")
+    return _persisted_secret("secret_key")
+
+
+def snapshot_token() -> str:
+    """Shared secret for the scheduled /tasks/snapshot endpoint (it must stay
+    reachable without a login, but not by anyone who guesses the URL)."""
+    k = os.environ.get("SNAPSHOT_TOKEN")
+    if k:
+        return k
+    return _persisted_secret("snapshot_token")
+
+
+def _persisted_secret(name: str) -> str:
+    path = os.path.join(st.data_dir(), name)
     try:
         with open(path) as fh:
             return fh.read().strip()

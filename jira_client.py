@@ -77,6 +77,9 @@ _cache_lock = threading.Lock()
 _cache_store: dict[Any, tuple[float, Any]] = {}
 _refreshing: set[Any] = set()
 _cached_fns: dict[str, Any] = {}
+# Bumped by clear_cache(). A fetch started before the bump (e.g. under an old
+# project selection) must not be stored after it — its data is already stale.
+_cache_gen = 0
 
 # ---- disk persistence: survive restarts/deploys -------------------------
 # Every successful fetch is also written to data_dir()/jira_cache.json (all
@@ -144,9 +147,13 @@ def _refresh_async(fn, args, kwargs, key):
 
     def run():
         try:
+            with _cache_lock:
+                gen = _cache_gen
             result = fn(*args, **kwargs)
             ts = time.time()
             with _cache_lock:
+                if _cache_gen != gen:  # cache cleared mid-fetch: discard result
+                    return
                 _cache_store[key] = (ts, result)
             _persist_entry(key, ts, result)
         except Exception:
@@ -180,9 +187,13 @@ def _cached(fn):
             if now - hit[0] >= CACHE_TTL:
                 _refresh_async(fn, args, kwargs, key)  # serve stale, refresh behind
             return hit[1]
+        with _cache_lock:
+            gen = _cache_gen
         result = fn(*args, **kwargs)  # cold cache: must fetch synchronously
         ts = time.time()
         with _cache_lock:
+            if _cache_gen != gen:  # cache cleared mid-fetch: serve but don't store
+                return result
             _cache_store[key] = (ts, result)
         # persist off-thread so the waiting request isn't delayed by disk I/O
         threading.Thread(target=_persist_entry, args=(key, ts, result),
@@ -194,9 +205,12 @@ def _cached(fn):
 def clear_cache() -> None:
     """Drop all cached fetches, memory AND disk (e.g. to force a fresh pull —
     the disk file must go too, or a restart would resurrect data fetched under
-    old settings such as a different project selection)."""
+    old settings such as a different project selection). Bumps the generation
+    so fetches already in flight are discarded instead of stored."""
+    global _cache_gen
     with _cache_lock:
         _cache_store.clear()
+        _cache_gen += 1
     try:
         with _persist_lock:
             os.remove(_cache_file())

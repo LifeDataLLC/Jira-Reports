@@ -16,9 +16,13 @@ import settings as st
 import workflow
 
 
-def _first_entry(issue, buckets) -> dt.datetime | None:
+def _first_entry(issue, buckets, after=None) -> dt.datetime | None:
+    """First transition into any of `buckets`; with `after`, the first one at or
+    after that time — so a ticket that visited QA before development ever began
+    (e.g. created straight into QA, then pulled back) can't produce a negative
+    dev→QA or cycle duration."""
     for ts, _a, _id, _f, to in issue.status_events:
-        if st.bucket_of(to) in buckets:
+        if st.bucket_of(to) in buckets and (after is None or ts >= after):
             return ts
     return None
 
@@ -32,8 +36,9 @@ def cycle_rows(issues, developer=None, start=None, end=None, match=None) -> list
         dev_start = _first_entry(i, {"active_dev"})
         if not dev_start:
             continue
-        rfqa = _first_entry(i, {"qa_stage"})
-        done = _first_entry(i, {"done"}) or i.resolved
+        rfqa = _first_entry(i, {"qa_stage"}, after=dev_start)
+        done = _first_entry(i, {"done"}, after=dev_start) \
+            or (i.resolved if i.resolved and i.resolved >= dev_start else None)
         anchor = done or rfqa or dev_start
         if (start and anchor < start) or (end and anchor >= end):
             continue
@@ -120,8 +125,8 @@ def bug_lens(issues, developer=None, start=None, end=None, match=None) -> list[d
         if not i.is_open:
             d["done"] += 1
             begin = _first_entry(i, {"active_dev"}) or i.created
-            fin = _first_entry(i, {"done"}) or i.resolved
-            if begin and fin:
+            fin = _first_entry(i, {"done"}, after=begin) or i.resolved
+            if begin and fin and fin >= begin:
                 d["hours"].append((fin - begin).total_seconds() / 3600)
         d["returned"] += sum(1 for _t, _a, _id, frm, to in i.status_events
                              if qh._is_return(frm, to))
