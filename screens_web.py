@@ -194,8 +194,10 @@ def _inject_filter_ctx(ctx, user, admin):
     developer; employees are locked to their one linked developer. Explicit
     values passed by a route still win (setdefault)."""
     psel, _scope = current_project_selection()
-    ctx.setdefault("filter_projects",
-                   [{"key": "all", "name": "All spaces"}] + jc.report_projects())
+    report = jc.report_projects()
+    # "All spaces" only makes sense when more than one space is configured.
+    proj_opts = report if len(report) <= 1 else [{"key": "all", "name": "All spaces"}] + report
+    ctx.setdefault("filter_projects", proj_opts)
     ctx.setdefault("filter_project_selected", psel)
     if admin:
         import auth

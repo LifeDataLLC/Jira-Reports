@@ -63,24 +63,21 @@ def configured_projects() -> list:
 
 
 def report_projects() -> list[dict]:
-    """The project spaces offered in the per-page project dropdown: [{key, name}].
-    Defaults to the two LifeData spaces; override with JIRA_REPORT_PROJECTS as
-    'KEY:Name,KEY:Name'."""
-    raw = os.environ.get("JIRA_REPORT_PROJECTS")
-    if raw:
-        out = []
-        for part in raw.split(","):
-            key, _, name = part.partition(":")
-            if key.strip():
-                out.append({"key": key.strip(), "name": name.strip() or key.strip()})
-        if out:
-            return out
-    return [{"key": "SUPPORT", "name": "LifeData Support"},
-            {"key": "LIFEDATAV2", "name": "LifeData Version 2"}]
+    """The project spaces offered in the per-page project dropdown: [{key, name}] —
+    exactly the spaces selected on the Settings screen ('Projects shown in views'),
+    with their Jira display names. Change the set by (un)checking projects there."""
+    names = {}
+    try:
+        for p in list_projects():
+            if p.get("key"):
+                names[p["key"]] = p.get("name") or p["key"]
+    except Exception:
+        pass
+    return [{"key": k, "name": names.get(k, k)} for k in configured_projects()]
 
 
 def report_project_keys() -> list:
-    return [p["key"] for p in report_projects()]
+    return list(configured_projects())
 
 
 WINDOW_DAYS = int(os.environ.get("JIRA_WINDOW_DAYS", "14"))
