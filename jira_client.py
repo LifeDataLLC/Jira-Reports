@@ -60,6 +60,29 @@ def configured_projects() -> list:
     except Exception:
         pass
     return PROJECT_KEYS
+
+
+def report_projects() -> list[dict]:
+    """The project spaces offered in the per-page project dropdown: [{key, name}].
+    Defaults to the two LifeData spaces; override with JIRA_REPORT_PROJECTS as
+    'KEY:Name,KEY:Name'."""
+    raw = os.environ.get("JIRA_REPORT_PROJECTS")
+    if raw:
+        out = []
+        for part in raw.split(","):
+            key, _, name = part.partition(":")
+            if key.strip():
+                out.append({"key": key.strip(), "name": name.strip() or key.strip()})
+        if out:
+            return out
+    return [{"key": "SUPPORT", "name": "LifeData Support"},
+            {"key": "LIFEDATAV2", "name": "LifeData Version 2"}]
+
+
+def report_project_keys() -> list:
+    return [p["key"] for p in report_projects()]
+
+
 WINDOW_DAYS = int(os.environ.get("JIRA_WINDOW_DAYS", "14"))
 
 
@@ -398,7 +421,9 @@ def fetch_dev_dataset(project: str | None = None, lookback_days: int | None = No
     """
     lookback = lookback_days or DEV_LOOKBACK_DAYS
     if project:
-        projects = f'"{project.strip()}"'
+        # `project` may be a single key or a comma-joined set (e.g. "all" spaces).
+        keys = [p.strip() for p in str(project).split(",") if p.strip()]
+        projects = " ,".join(f'"{k}"' for k in keys)
     else:
         projects = " ,".join(f'"{p.strip()}"' for p in configured_projects())
     cf = detect_custom_fields()

@@ -188,7 +188,7 @@ def all_developers() -> list[dict]:
     import jira_client as jc
     seen = {}
     try:
-        for raw in jc.fetch_dev_dataset(None):
+        for raw in jc.fetch_dev_dataset(",".join(jc.report_project_keys())):
             a = (raw.get("fields", {}) or {}).get("assignee") or {}
             name = a.get("displayName")
             if name and name != "Unassigned":

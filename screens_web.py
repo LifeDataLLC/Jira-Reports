@@ -184,13 +184,49 @@ def page(body, active="", show_banner=True, **ctx):
     shell = (chrome + '<div class="wrap">'
              + f'<div class="fresh">data as of {fresh} · cached ~5 min</div>'
              + banner + body + "</div>")
+    _inject_filter_ctx(ctx, user, admin)
     return render_template_string(shell, request=request, st=st, **ctx)
 
 
+def _inject_filter_ctx(ctx, user, admin):
+    """Provide the project + developer dropdown options to every screen's
+    FILTER_BAR. Role-aware, mirroring My Day: admins pick any (or all)
+    developer; employees are locked to their one linked developer. Explicit
+    values passed by a route still win (setdefault)."""
+    psel, _scope = current_project_selection()
+    ctx.setdefault("filter_projects",
+                   [{"key": "all", "name": "All spaces"}] + jc.report_projects())
+    ctx.setdefault("filter_project_selected", psel)
+    if admin:
+        import auth
+        ctx.setdefault("filter_devs", auth.visible_developers())
+        ctx.setdefault("filter_dev_selected", (request.args.get("developer") or "").strip())
+        ctx.setdefault("filter_dev_locked", False)
+    else:
+        own = (user or {}).get("developer_id") or (user or {}).get("developer")
+        own_name = (user or {}).get("developer") or own
+        ctx.setdefault("filter_devs", [{"id": own, "name": own_name}] if own else [])
+        ctx.setdefault("filter_dev_selected", own or "")
+        ctx.setdefault("filter_dev_locked", True)
+
+
+PROJECT_SELECT = """
+  <label>Project
+    <select name="project">
+      {% for p in filter_projects %}<option value="{{ p.key }}"{% if p.key == filter_project_selected %} selected{% endif %}>{{ p.name }}</option>{% endfor %}
+    </select>
+  </label>"""
+
+DEV_SELECT = """
+  <label>Developer
+    <select name="developer"{% if filter_dev_locked %} disabled title="Your account is linked to one developer"{% endif %}>
+      {% if not filter_dev_locked %}<option value="">All developers</option>{% endif %}
+      {% for d in filter_devs %}<option value="{{ d.id }}"{% if d.id == filter_dev_selected or d.name == filter_dev_selected %} selected{% endif %}>{{ d.name }}</option>{% endfor %}
+    </select>
+  </label>"""
+
 FILTER_BAR = """
-<form method="get" class="filterbar" id="globalFilters">
-  <label>Project<input name="project" value="{{ request.args.get('project','') }}" placeholder="all" style="width:100px"></label>
-  <label>Developer<input name="developer" value="{{ request.args.get('developer','') }}" placeholder="name or accountId" style="width:150px"></label>
+<form method="get" class="filterbar" id="globalFilters">""" + PROJECT_SELECT + DEV_SELECT + """
   <label>Start<input type="date" name="start" value="{{ request.args.get('start','') }}"></label>
   <label>End<input type="date" name="end" value="{{ request.args.get('end','') }}"></label>
   {{ extra_filters|default('')|safe }}
@@ -205,12 +241,13 @@ FILTER_BAR = """
   if(![...qs.keys()].length){
     try{var saved=JSON.parse(localStorage.getItem(KEY)||'{}');
       ['project','developer','start','end'].forEach(function(k){
-        if(saved[k]){var el=f.querySelector('[name='+k+']'); if(el&&!el.value)el.value=saved[k];}
+        var el=f.querySelector('[name='+k+']');
+        if(saved[k]&&el&&!el.disabled&&!el.value)el.value=saved[k];
       });}catch(e){}
   }
   f.addEventListener('submit',function(){
     var data={}; ['project','developer','start','end'].forEach(function(k){
-      var el=f.querySelector('[name='+k+']'); if(el&&el.value)data[k]=el.value;});
+      var el=f.querySelector('[name='+k+']'); if(el&&!el.disabled&&el.value)data[k]=el.value;});
     try{localStorage.setItem(KEY,JSON.stringify(data));}catch(e){}
   });
 })();
@@ -218,9 +255,37 @@ FILTER_BAR = """
 """
 
 
+def current_project_selection():
+    """(selected_value, fetch_scope). selected_value is 'all' or a single project
+    key (for the dropdown); fetch_scope is what to pass to fetch_dev_dataset —
+    the comma-joined spaces for 'all', else the single key.
+
+    With no explicit choice the default follows the admin's configured scope
+    (Settings → Projects shown in views), so today's behavior is preserved and
+    'All'/the other space are opt-in."""
+    keys = jc.report_project_keys()
+    raw = (request.args.get("project") or "").strip()
+    if raw == "all":
+        return "all", ",".join(keys)
+    if raw and raw in keys:
+        return raw, raw
+    configured = [k for k in jc.configured_projects() if k in keys]
+    if len(configured) == 1:
+        return configured[0], configured[0]
+    return "all", ",".join(keys)
+
+
 def parse_filters():
-    project = (request.args.get("project") or "").strip() or None
-    developer = (request.args.get("developer") or "").strip() or None
+    """Shared filter values for the FILTER_BAR screens. Employees are locked to
+    their own linked developer (as on My Day), regardless of the URL."""
+    import auth
+    user = auth.current_user()
+    if user and user.get("role") != "admin":
+        # linked developer, or a sentinel that matches nothing if unlinked
+        developer = user.get("developer_id") or user.get("developer") or "\x00nomatch"
+    else:
+        developer = (request.args.get("developer") or "").strip() or None
+    _selected, project = current_project_selection()
     def d(v):
         try:
             return dt.datetime.fromisoformat(v).replace(tzinfo=dt.timezone.utc) if v else None
@@ -364,9 +429,11 @@ CHECK_LABELS = [
 
 
 def _statuses_seen():
+    # Pull from every reportable space so an admin can classify Support statuses
+    # too — otherwise the "All spaces" view shows them as unclassified.
     seen = set(st.load()["status_buckets"])
     try:
-        for raw in jc.fetch_dev_dataset(None):
+        for raw in jc.fetch_dev_dataset(",".join(jc.report_project_keys())):
             name = (raw.get("fields", {}).get("status") or {}).get("name", "")
             if name:
                 seen.add(name)
@@ -460,6 +527,11 @@ MYDAY_TMPL = """
 <h1>My Day</h1>
 <div class="sub">Your open tickets — clear the red items before you sign off{% if is_admin %} · <a href="/my-day/rollup?{{ request.query_string.decode() }}">team roll-up</a> · <a href="/my-day/feed?{{ request.query_string.decode() }}">activity feed</a>{% endif %}</div>
 <form method="get" class="filterbar">
+  <label>Project
+    <select name="project" onchange="this.form.submit()">
+      {% for p in filter_projects %}<option value="{{ p.key }}"{% if p.key == filter_project_selected %} selected{% endif %}>{{ p.name }}</option>{% endfor %}
+    </select>
+  </label>
   <label>Developer<select name="developer" {% if not is_admin %}{% if dev_options|length <= 1 %}disabled{% endif %}{% endif %} onchange="this.form.submit()">
     {% if is_admin %}<option value="">— select a developer —</option>{% endif %}
     {% for o in dev_options %}<option value="{{ o.id }}" {% if o.id == selected_dev %}selected{% endif %}>{{ o.name }}</option>{% endfor %}
@@ -562,7 +634,8 @@ def my_day_screen():
         dev_options = [{"id": own, "name": own_name}] if own else []
         selected_dev = own or ""
     day = _day_arg()
-    d = (checklist.my_day(_issues(None), selected_dev, day, dr._dev_match)
+    _psel, scope = current_project_selection()
+    d = (checklist.my_day(_issues(scope), selected_dev, day, dr._dev_match)
          if selected_dev else None)
     return page(MYDAY_TMPL, active="/my-day", d=d, g=gloss,
                 is_admin=is_admin, dev_options=dev_options, selected_dev=selected_dev,
