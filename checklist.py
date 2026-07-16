@@ -126,7 +126,7 @@ def evaluate_ticket(issue, day: dt.date, now=None) -> dict:
             "eod_signal": eod_signal}
 
 
-def my_day(issues, developer, day: dt.date, match, now=None) -> dict:
+def my_day(issues, developer, day: dt.date, match, now=None, show_all=False) -> dict:
     """Checklist rows for one developer's open, assigned work: anything in an
     active status (currently working), paused, in the QA pipeline, or reopened.
     To Do and Done are excluded.
@@ -134,20 +134,27 @@ def my_day(issues, developer, day: dt.date, match, now=None) -> dict:
     The rows are filtered to those that were edited on `day` — had a comment or a
     status change that day — EXCEPT tickets in an active status, which are always
     shown because they're what's being worked right now, even if they went active
-    on an earlier day."""
+    on an earlier day.
+
+    With show_all=True the view instead lists EVERY open (non-done) ticket
+    assigned to the developer — their whole workload, including To Do — ignoring
+    both the bucket and date filters, so they can eyeball the status of everything."""
     d0, d1 = _day_bounds(day)
     rows = []
     for i in issues:
         b = st.bucket_of(i.status, i.category)
+        if show_all:
+            if b == "done" or i.category == "Done":
+                continue
         # Unmapped statuses in Jira's own In Progress category still appear so the
         # developer sees the "status classified" failure (never silently dropped).
-        if b not in ("active_dev", "rework", "qa_stage", "paused") and not (
+        elif b not in ("active_dev", "rework", "qa_stage", "paused") and not (
                 b is None and i.category == "In Progress"):
             continue
         if developer and match and not match(developer, i.assignee, i.assignee_id):
             continue
         r = evaluate_ticket(i, day, now)
-        if not (r["active"] or activity.edited_in_range(i, d0, d1)):
+        if not show_all and not (r["active"] or activity.edited_in_range(i, d0, d1)):
             continue
         rows.append(r)
     # Tickets in an active status ("currently working") are pinned to the top;
