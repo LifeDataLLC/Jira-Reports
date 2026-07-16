@@ -131,10 +131,10 @@ def my_day(issues, developer, day: dt.date, match, now=None) -> dict:
     active status (currently working), paused, in the QA pipeline, or reopened.
     To Do and Done are excluded.
 
-    The rows are filtered to those whose most recent action (comment, status
-    change, worklog, …) happened on `day` — EXCEPT tickets in an active status,
-    which are always shown because they're what's being worked right now, even if
-    they went active on an earlier day."""
+    The rows are filtered to those that were edited on `day` — had a comment or a
+    status change that day — EXCEPT tickets in an active status, which are always
+    shown because they're what's being worked right now, even if they went active
+    on an earlier day."""
     d0, d1 = _day_bounds(day)
     rows = []
     for i in issues:
@@ -147,7 +147,7 @@ def my_day(issues, developer, day: dt.date, match, now=None) -> dict:
         if developer and match and not match(developer, i.assignee, i.assignee_id):
             continue
         r = evaluate_ticket(i, day, now)
-        if not (r["active"] or (r["last_activity"] and d0 <= r["last_activity"] < d1)):
+        if not (r["active"] or activity.edited_in_range(i, d0, d1)):
             continue
         rows.append(r)
     # Tickets in an active status ("currently working") are pinned to the top;

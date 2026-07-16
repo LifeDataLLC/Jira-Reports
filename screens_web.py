@@ -31,6 +31,16 @@ def _issues(project=None):
     return dr.load_dev_issues(jc.fetch_dev_dataset(project), jc.detect_custom_fields())
 
 
+def _issues_in_range(project, start, end):
+    """Issues for the given project scope, further restricted — when a date or
+    range is selected — to tickets edited (a comment or status change) within it.
+    With no date selected, returns the full set. Applies to every report."""
+    issues = _issues(project)
+    if start or end:
+        issues = [i for i in issues if activity.edited_in_range(i, start, end)]
+    return issues
+
+
 # ---------------------------------------------------------------------------
 # Shared chrome — purpose-grouped nav (FR-U2) + global filter bar (FR-U1)
 # ---------------------------------------------------------------------------
@@ -760,9 +770,9 @@ document.addEventListener('click',function(ev){
 
 
 def _attention_board():
-    project, developer, _s, _e = parse_filters()
+    project, developer, start, end = parse_filters()
     reason = (request.args.get("reason") or "").strip() or None
-    return attention.board(_issues(project), developer, reason, dr._dev_match)
+    return attention.board(_issues_in_range(project, start, end), developer, reason, dr._dev_match)
 
 
 @v3.route("/attention")
@@ -872,8 +882,8 @@ reschedule counts. The Jira-side prerequisites are documented in <code>docs/jira
 def planning_screen():
     import planning as pl
     from metrics_glossary import gloss
-    project, developer, _s, _e = parse_filters()
-    issues = _issues(project)
+    project, developer, start, end = parse_filters()
+    issues = _issues_in_range(project, start, end)
     h = pl.hygiene(issues, developer, dr._dev_match)
     dispo = attention.disposition_compliance(issues)
     return page(PLANNING_TMPL, active="/planning", h=h, dispo=dispo, g=gloss,
@@ -929,9 +939,9 @@ QA_TMPL = """
 def _qa_data():
     import qa_handoff as qh
     project, developer, start, end = parse_filters()
+    issues = _issues_in_range(project, start, end)  # edited-in-range ticket filter
     if not start and not end:
-        start = A.now_utc() - dt.timedelta(days=14)
-    issues = _issues(project)
+        start = A.now_utc() - dt.timedelta(days=14)  # default window for the feeds
     return (qh.handoff_feed(issues, developer, start, end, dr._dev_match),
             qh.returned_feed(issues, developer, start, end, dr._dev_match),
             qh.return_rates(issues, start, end))
@@ -1155,11 +1165,10 @@ def _hfmt(hours):
 def _flow_data():
     import flow_quality as fq
     project, developer, start, end = parse_filters()
-    if not start and not end:
-        start = A.now_utc() - dt.timedelta(days=30)
-    issues = _issues(project)
-    rows = fq.cycle_rows(issues, developer, start, end, dr._dev_match)
-    focus = dr.developer_focus(issues, developer=developer, start=start, end=end)["rows"]
+    issues = _issues_in_range(project, start, end)  # edited-in-range ticket filter
+    win_start = start if (start or end) else A.now_utc() - dt.timedelta(days=30)
+    rows = fq.cycle_rows(issues, developer, win_start, end, dr._dev_match)
+    focus = dr.developer_focus(issues, developer=developer, start=win_start, end=end)["rows"]
     return (rows, fq.cycle_stats(rows), fq.bottleneck(issues),
             fq.multiple_active(issues, developer, dr._dev_match), focus)
 
@@ -1235,7 +1244,7 @@ QUALITY_TMPL = """
 def _quality_data():
     import flow_quality as fq
     project, developer, start, end = parse_filters()
-    issues = _issues(project)
+    issues = _issues_in_range(project, start, end)  # edited-in-range ticket filter
     return (fq.bug_lens(issues, developer, start, end, dr._dev_match),
             fq.reopen_loops(issues), fq.return_trend(issues))
 

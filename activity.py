@@ -70,3 +70,13 @@ def build_feed(issues, developer=None, start=None, end=None, match=None) -> list
 def last_event_ts(issue) -> dt.datetime | None:
     ev = events_for(issue)
     return ev[-1].ts if ev else (issue.updated or issue.created)
+
+
+def edited_in_range(issue, start, end) -> bool:
+    """True if the ticket was 'edited' within [start, end) — i.e. had a comment or
+    a status change in that window. This is the definition behind the date filter
+    (worklogs and field tweaks don't count as an edit). start/end may be None."""
+    def _in(ts):
+        return ts is not None and (start is None or ts >= start) and (end is None or ts < end)
+    return (any(_in(ev[0]) for ev in issue.status_events)
+            or any(_in(c.get("ts")) for c in issue.comments))
