@@ -187,6 +187,7 @@ def page(body, active="", show_banner=True, **ctx):
     if user:
         navlinks += (f'<span style="margin-left:auto;color:#9a9c9a;font-size:12px">'
                      f'{user["email"]} ({user["role"]}) · '
+                     f'<a href="/change-password" style="color:#fff;text-decoration:underline">Change password</a> · '
                      f'<a href="/logout" style="color:#fff;text-decoration:underline">Log out</a></span>')
     chrome = CHROME_TOP.replace("{NAVLINKS}", navlinks) + _overlay()
     banner = unmapped_banner() if (show_banner and admin) else ""

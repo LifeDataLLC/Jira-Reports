@@ -112,8 +112,12 @@ class AuthError(Exception):
     pass
 
 
-def create_user(email, password, role, developer=None, developer_id=None):
-    """Create an account. Raises AuthError on any validation problem."""
+def create_user(email, password, role, developer=None, developer_id=None,
+                must_change=False):
+    """Create an account. Raises AuthError on any validation problem.
+
+    must_change=True marks the password as temporary — the user is forced to set
+    their own on first login (used for admin-created accounts)."""
     email = (email or "").strip().lower()
     if "@" not in email or len(email) < 5:
         raise AuthError("Enter a valid work email address.")
@@ -136,10 +140,27 @@ def create_user(email, password, role, developer=None, developer_id=None):
         "role": role,
         "developer": developer or None,
         "developer_id": developer_id or None,
+        "must_change": bool(must_change),
         "created_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
     }
     _save(data)
     return data["users"][email]
+
+
+def set_password(email, new_password) -> dict:
+    """Set (replace) a user's password and clear the must-change flag. Raises
+    AuthError if the password is too short or the account is missing."""
+    if len(new_password or "") < 8:
+        raise AuthError("Password must be at least 8 characters.")
+    email = (email or "").strip().lower()
+    data = _load()
+    u = data["users"].get(email)
+    if not u:
+        raise AuthError("Account not found.")
+    u["password_hash"] = generate_password_hash(new_password, method="pbkdf2:sha256")
+    u["must_change"] = False
+    _save(data)
+    return u
 
 
 def delete_user(email: str) -> None:

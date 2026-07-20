@@ -79,6 +79,9 @@ def _require_login():
     user = auth.current_user()
     if not user:
         return redirect("/login?next=" + quote(request.full_path))
+    # Admin-created accounts must set their own password before using the app.
+    if user.get("must_change") and not path.startswith("/change-password"):
+        return redirect("/change-password")
     if path.startswith(_ADMIN_PREFIXES) and user.get("role") != "admin":
         return ("<p style='font-family:sans-serif;margin:40px'>Admin only. "
                 "<a href='/my-day'>Go to My Day</a> · <a href='/logout'>Log out</a></p>", 403)

@@ -117,6 +117,56 @@ def logout():
     return redirect("/login")
 
 
+CHANGE_PW = SHELL + """
+<div class="box">
+  <h1>{{ 'Set your password' if forced else 'Change password' }}</h1>
+  <div class="sub">{% if forced %}Your account was created with a temporary password — set your own to continue.{% else %}Update the password for {{ email }}.{% endif %}</div>
+  {% if error %}<div class="err">{{ error }}</div>{% endif %}
+  {% if msg %}<div class="warn" style="background:#e3fcef;color:#006644">{{ msg }}</div>{% endif %}
+  <form method="post">
+    {% if not forced %}
+    <label>Current password</label>
+    <input name="current" type="password" autocomplete="current-password" required autofocus>
+    {% endif %}
+    <label>New password <span class="muted">(min 8 characters)</span></label>
+    <input name="new" type="password" autocomplete="new-password" required {% if forced %}autofocus{% endif %}>
+    <label>Confirm new password</label>
+    <input name="confirm" type="password" autocomplete="new-password" required>
+    <button class="btn" type="submit">Save password</button>
+  </form>
+  <div class="muted">{% if forced %}<a href="/logout">Log out</a>{% else %}<a href="/">Back to the app</a>{% endif %}</div>
+</div>
+"""
+
+
+@authbp.route("/change-password", methods=["GET", "POST"])
+def change_password():
+    user = auth.current_user()
+    if not user:
+        return redirect("/login?next=/change-password")
+    forced = bool(user.get("must_change"))
+    error = msg = None
+    if request.method == "POST":
+        new = request.form.get("new", "")
+        confirm = request.form.get("confirm", "")
+        # A forced (first-login) change skips the current-password check — the user
+        # just authenticated with the temp password to get here.
+        if not forced and not auth.verify(user["email"], request.form.get("current", "")):
+            error = "Current password is incorrect."
+        elif new != confirm:
+            error = "The new passwords do not match."
+        else:
+            try:
+                auth.set_password(user["email"], new)
+                if forced:
+                    return redirect("/")
+                msg = "Password updated."
+            except auth.AuthError as e:
+                error = str(e)
+    return render_template_string(CHANGE_PW, forced=forced, email=user["email"],
+                                  error=error, msg=msg)
+
+
 @authbp.route("/register", methods=["GET", "POST"])
 def register():
     first = auth.user_count() == 0
@@ -153,7 +203,7 @@ USERS_TMPL = """
   <form method="post" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
     <input type="hidden" name="action" value="create">
     <label style="font-size:12px;color:#5e6c84">Email<br><input name="email" type="email" required style="padding:7px 9px;border:1px solid #dfe1e6;border-radius:6px"></label>
-    <label style="font-size:12px;color:#5e6c84">Password<br><input name="password" type="text" required placeholder="min 8 chars" style="padding:7px 9px;border:1px solid #dfe1e6;border-radius:6px"></label>
+    <label style="font-size:12px;color:#5e6c84">Temporary password<br><input name="password" type="text" required placeholder="min 8 chars" style="padding:7px 9px;border:1px solid #dfe1e6;border-radius:6px"></label>
     <label style="font-size:12px;color:#5e6c84">Role<br>
       <select name="role" style="padding:7px 9px;border:1px solid #dfe1e6;border-radius:6px">
         <option value="employee">employee</option><option value="admin">admin</option></select></label>
@@ -163,7 +213,7 @@ USERS_TMPL = """
         {% for d in developers %}<option value="{{ d.id }}">{{ d.name }}</option>{% endfor %}</select></label>
     <button class="btn" type="submit">Create</button>
   </form>
-  <p class="muted">Employees must be linked to a developer; admins may leave it blank.</p>
+  <p class="muted">Employees must be linked to a developer; admins may leave it blank. Give the person the temporary password — they'll be required to set their own the first time they log in.</p>
 </div>
 <table>
 <tr><th>Email</th><th>Role</th><th>Developer</th><th>Created</th><th></th></tr>
@@ -196,8 +246,9 @@ def admin_users():
             try:
                 auth.create_user(request.form.get("email", ""), request.form.get("password", ""),
                                  request.form.get("role", "employee"),
-                                 developer=dev_by_id.get(did), developer_id=did)
-                msg = "Account created."
+                                 developer=dev_by_id.get(did), developer_id=did,
+                                 must_change=True)  # user sets their own on first login
+                msg = "Account created. The user sets their own password on first login."
             except auth.AuthError as e:
                 error = str(e)
     return screens_web.page(USERS_TMPL, active="/settings", users=auth.list_users(),
