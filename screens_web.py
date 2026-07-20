@@ -751,11 +751,14 @@ def myday_json():
 
 ATTN_TMPL = """
 <h1>Attention Board</h1>
-<div class="sub">Every ticket needing intervention, worst first — reason chips stack per ticket</div>
+<div class="sub">Work already in progress that's slipping — worst first, reason chips stack per ticket</div>
 """ + FILTER_BAR.replace("{{ extra_filters|default('')|safe }}",
   """<label>Reason<select name="reason"><option value="">all</option>
   {% for k in d.kinds %}<option value="{{ k }}" {% if request.args.get('reason')==k %}selected{% endif %}>{{ k }}</option>{% endfor %}
   </select></label>""") + """
+<div class="sectionbox" style="padding:10px 14px;margin-bottom:14px">
+  <p class="muted" style="margin:0">This board surfaces <b>active work that needs a nudge</b> — tickets that are aging, silent, overdue, blocked, or missing a release. It's scoped to work that's underway or bounced back, so <b>not-yet-started backlog (To&nbsp;Do)</b> and completed tickets don't appear here.</p>
+</div>
 <p class="muted">{{ d.rows|length }} ticket(s) need attention. <a href="/api/v2/attention.csv?{{ request.query_string.decode() }}" download>Download CSV</a></p>
 <table>
 <tr><th>Issue</th><th>Summary</th><th>Developer</th><th>Status</th><th>Reasons</th><th></th></tr>
