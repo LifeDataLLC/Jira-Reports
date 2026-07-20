@@ -879,13 +879,6 @@ reschedule counts. The Jira-side prerequisites are documented in <code>docs/jira
 {% else %}<tr><td colspan="4" class="muted">Every open ticket has an estimate.</td></tr>{% endfor %}</table>
 {% endif %}
 {% endif %}
-
-<h2>{{ g('disposition','Disposition compliance')|safe }}</h2>
-<div class="cards">
-  <div class="card"><div class="n">{{ dispo.flagged }}</div><div class="l">Tickets over threshold</div></div>
-  <div class="card"><div class="n">{{ dispo.dispositioned }}</div><div class="l">Dispositioned (backlog / future start)</div></div>
-  <div class="card"><div class="n">{{ dispo.pct if dispo.pct is not none else '—' }}{{ '%' if dispo.pct is not none }}</div><div class="l">Within 48h</div></div>
-</div>
 """
 
 
@@ -896,8 +889,7 @@ def planning_screen():
     project, developer, start, end = parse_filters()
     issues = _issues_in_range(project, start, end)
     h = pl.hygiene(issues, developer, dr._dev_match)
-    dispo = attention.disposition_compliance(issues)
-    return page(PLANNING_TMPL, active="/planning", h=h, dispo=dispo, g=gloss,
+    return page(PLANNING_TMPL, active="/planning", h=h, g=gloss,
                 sprints_enabled=st.gate("sprints_enabled"),
                 dates_on=st.gate("due_dates_required") or st.gate("start_dates_required"),
                 est_on=st.gate("estimates_used"),
@@ -1354,8 +1346,6 @@ def trends_screen():
                f"{agg['blocked_count']}"
                + (f" · med {agg['blocked_median_days']}d" if agg['blocked_median_days'] else ""),
                invert=True),
-        metric("disposition_pct", "Disposition compliance",
-               f"{agg['disposition_pct']}%" if agg["disposition_pct"] is not None else "—"),
         metric("attention_size", "Attention board size", agg["attention_size"], invert=True),
     ]
     board = attention.board(issues)

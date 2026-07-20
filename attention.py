@@ -9,8 +9,6 @@ are added by Phase 4 behind their gates.
 
 from __future__ import annotations
 
-import datetime as dt
-
 import activity
 import analytics as A
 import settings as st
@@ -83,55 +81,6 @@ def _reasons_for(issue, now) -> list[dict]:
                         "kind": "dates", "severity": 1.0})
 
     return reasons
-
-
-def disposition_state(issue, now) -> dict | None:
-    """Needs-disposition rule (FR-A3, PRD §3.6): a ticket over its aging threshold
-    must move to Backlog (todo bucket) or get a future start date within 48h of
-    crossing the threshold. Computed statelessly from the changelog."""
-    thr = st.threshold_for(issue.status)
-    if thr is None:
-        return None
-    entered = issue.status_events[-1][0] if issue.status_events else issue.created
-    if not entered:
-        return None
-    crossed = entered + dt.timedelta(days=thr)
-    if now < crossed:
-        return None
-    # Dispositioned when, after crossing: moved to todo bucket, or start date set future.
-    for ts, _a, _id, _f, to in issue.status_events:
-        if ts >= crossed and st.bucket_of(to) == "todo":
-            return {"state": "dispositioned", "within_48h": (ts - crossed).total_seconds() <= 48 * 3600}
-    for ts, _a, kind, _f, to in issue.field_events:
-        if kind == "startdate" and ts >= crossed:
-            try:
-                if dt.date.fromisoformat(to[:10]) > now.date():
-                    return {"state": "dispositioned", "within_48h": (ts - crossed).total_seconds() <= 48 * 3600}
-            except ValueError:
-                continue
-    hours_open = (now - crossed).total_seconds() / 3600
-    return {"state": "needs_disposition", "hours_open": hours_open,
-            "overdue_48h": hours_open > 48}
-
-
-def disposition_compliance(issues, now=None) -> dict:
-    """FR-A3: of tickets that crossed their aging threshold, % dispositioned
-    (moved to Backlog or given a future start date) within 48h."""
-    now = now or A.now_utc()
-    flagged = dispositioned = within = 0
-    for i in issues:
-        if st.bucket_of(i.status, i.category) == "done":
-            continue
-        d = disposition_state(i, now)
-        if not d:
-            continue
-        flagged += 1
-        if d["state"] == "dispositioned":
-            dispositioned += 1
-            if d["within_48h"]:
-                within += 1
-    return {"flagged": flagged, "dispositioned": dispositioned, "within_48h": within,
-            "pct": round(100 * within / flagged) if flagged else None}
 
 
 def board(issues, developer=None, reason_filter=None, match=None, now=None) -> dict:

@@ -395,28 +395,6 @@ def test_planning_gated():
     check("overdue dark when gate off", "overdue" not in kinds2)
 
 
-def test_disposition():
-    import attention
-    import dev_reports as dr
-    # Over threshold (active_dev default 5d): entered status 10d ago; moved to
-    # Backlog 3d ago -> dispositioned, but NOT within 48h of crossing (crossed 5d ago).
-    raw = mkraw("D-1", "To Do", "To Do", events=[
-        (10, "Jane Doe", "status", "To Do", "Development / In Design"),
-        (3, "Jane Doe", "status", "Development / In Design", "Backlog"),
-    ])
-    i = dr.load_dev_issues([raw])[0]
-    # simulate: currently in Backlog; disposition_state checks the CURRENT status
-    # threshold — Backlog (todo) has none, so evaluate the pre-move ticket instead.
-    raw2 = mkraw("D-2", "Development / In Design", "In Progress", events=[
-        (10, "Jane Doe", "status", "To Do", "Development / In Design")])
-    i2 = dr.load_dev_issues([raw2])[0]
-    d = attention.disposition_state(i2, now)
-    check("needs disposition after threshold", d and d["state"] == "needs_disposition")
-    check("48h breach detected", d["overdue_48h"] is True)
-    comp = attention.disposition_compliance(dr.load_dev_issues([raw2]), now)
-    check("compliance counts flagged", comp["flagged"] == 1 and comp["within_48h"] == 0)
-
-
 def test_dev_team_rules():
     """The seven Jira Ticket Rules mapped to checks."""
     import attention

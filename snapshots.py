@@ -53,7 +53,6 @@ def compute_aggregates(issues, now=None) -> dict:
             blocked_count += 1
             if ts:
                 blocked_days.append((now - ts).total_seconds() / 86400)
-    dispo = attention.disposition_compliance(issues, now)
     board = attention.board(issues, now=now)
     med_blocked = A.percentile(blocked_days, 50)
     return {
@@ -63,7 +62,6 @@ def compute_aggregates(issues, now=None) -> dict:
         "handoffs": handoffs, "returns": returns,
         "blocked_count": blocked_count,
         "blocked_median_days": round(med_blocked, 1) if med_blocked is not None else None,
-        "disposition_pct": dispo["pct"],
         "attention_size": len(board["rows"]),
     }
 

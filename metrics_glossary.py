@@ -39,8 +39,6 @@ GLOSSARY = {
     "slip": "Current due date minus the original (first-ever) due date, with the push count.",
     "reschedule_count": "How many times the planned start date was moved. A prioritization signal, "
                         "not a developer problem.",
-    "disposition": "An over-threshold ticket must move to Backlog or get a future start date "
-                   "within 48 hours.",
     "eod_pause": "Active tickets must be moved to their paused status at end of day "
                  "(and back to active when resumed). Flags tickets left in an active status overnight.",
     "has_release": "Every ticket must belong to a release (fixVersion) — an upcoming feature, "
