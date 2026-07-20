@@ -147,9 +147,10 @@ def create_user(email, password, role, developer=None, developer_id=None,
     return data["users"][email]
 
 
-def set_password(email, new_password) -> dict:
-    """Set (replace) a user's password and clear the must-change flag. Raises
-    AuthError if the password is too short or the account is missing."""
+def set_password(email, new_password, must_change=False) -> dict:
+    """Set (replace) a user's password. Clears the must-change flag by default;
+    an admin reset passes must_change=True so the user must set their own again.
+    Raises AuthError if the password is too short or the account is missing."""
     if len(new_password or "") < 8:
         raise AuthError("Password must be at least 8 characters.")
     email = (email or "").strip().lower()
@@ -158,9 +159,14 @@ def set_password(email, new_password) -> dict:
     if not u:
         raise AuthError("Account not found.")
     u["password_hash"] = generate_password_hash(new_password, method="pbkdf2:sha256")
-    u["must_change"] = False
+    u["must_change"] = bool(must_change)
     _save(data)
     return u
+
+
+def generate_temp_password() -> str:
+    """A random, shareable temporary password (admin resets / created accounts)."""
+    return secrets.token_urlsafe(9)
 
 
 def delete_user(email: str) -> None:

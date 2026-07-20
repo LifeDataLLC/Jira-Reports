@@ -220,7 +220,10 @@ USERS_TMPL = """
 {% for u in users %}
 <tr><td>{{ u.email }}</td><td><span class="pill {{ 'bad' if u.role=='admin' else '' }}">{{ u.role }}</span></td>
 <td>{{ u.developer or '—' }}</td><td class="muted">{{ u.created_at[:10] }}</td>
-<td><form method="post" onsubmit="return confirm('Delete {{ u.email }}?')"><input type="hidden" name="action" value="delete"><input type="hidden" name="email" value="{{ u.email }}"><button class="btn-ghost" type="submit">Delete</button></form></td></tr>
+<td>
+<form method="post" style="display:inline" onsubmit="return confirm('Reset the password for {{ u.email }}? A new temporary password will be generated and shown once.')"><input type="hidden" name="action" value="reset"><input type="hidden" name="email" value="{{ u.email }}"><button class="btn-ghost" type="submit">Reset password</button></form>
+<form method="post" style="display:inline" onsubmit="return confirm('Delete {{ u.email }}?')"><input type="hidden" name="action" value="delete"><input type="hidden" name="email" value="{{ u.email }}"><button class="btn-ghost" type="submit">Delete</button></form>
+</td></tr>
 {% endfor %}
 </table>
 """
@@ -241,6 +244,15 @@ def admin_users():
             else:
                 auth.delete_user(target)
                 msg = f"Deleted {target}."
+        elif action == "reset":
+            target = request.form.get("email", "")
+            if not auth.get_user(target):
+                error = "Account not found."
+            else:
+                temp = auth.generate_temp_password()
+                auth.set_password(target, temp, must_change=True)
+                msg = (f"Password reset for {target}. Temporary password: {temp} — "
+                       f"share it with them; they'll set their own on next login.")
         elif action == "create":
             did = request.form.get("developer_id") or None
             try:
