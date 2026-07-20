@@ -167,7 +167,8 @@ def test_checklist():
     check("removed checks gone", "worklog_today" not in g and "handoff_comment" not in g
           and "eod_pause" not in g and "start_date" not in g and "blocked_reason" not in g
           and "not_over_threshold" not in g)
-    check("kept 4 checks", set(g) == {"status_mapped", "comment_today", "due_date", "has_release"})
+    check("kept 5 checks", set(g) == {"status_mapped", "comment_today", "due_date",
+                                      "past_due", "has_release"})
     b = dict((c[0], c[2]) for c in rows["C-2"]["checks"])
     check("unmapped status fails", b["status_mapped"] == "fail")
     check("no comment fails", b["comment_today"] == "fail")

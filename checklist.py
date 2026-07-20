@@ -16,12 +16,13 @@ import activity
 import analytics as A
 import settings as st
 
-CHECK_ORDER = ["status_mapped", "comment_today", "due_date", "has_release"]
+CHECK_ORDER = ["status_mapped", "comment_today", "due_date", "past_due", "has_release"]
 
 CHECK_LABELS = {
     "status_mapped": "Status classified",
     "comment_today": "Comment today",
     "due_date": "Due date set",
+    "past_due": "Past due date",
     "has_release": "Belongs to a release",
 }
 
@@ -97,6 +98,16 @@ def evaluate_ticket(issue, day: dt.date, now=None) -> dict:
             "" if issue.duedate else "missing due date")
     else:
         add("due_date", "na", "due dates not required")
+
+    # Past due: a due date exists and is in the past. Independent of the due-date
+    # gate — if someone set a due date and it slipped, that's always worth a flag.
+    today = (now or A.now_utc()).date()
+    if issue.duedate is None:
+        add("past_due", "na", "no due date set")
+    elif issue.duedate < today:
+        add("past_due", "fail", f"due {issue.duedate.isoformat()} — past due")
+    else:
+        add("past_due", "pass", f"due {issue.duedate.isoformat()}")
 
     # Every ticket must belong to a release (fixVersion).
     add("has_release", "pass" if issue.has_release else "fail",

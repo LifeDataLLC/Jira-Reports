@@ -435,7 +435,8 @@ GATE_LABELS = [
 ]
 CHECK_LABELS = [
     ("status_mapped", "Status classified"), ("comment_today", "Comment today"),
-    ("due_date", "Due date present (gated)"), ("has_release", "Belongs to a release"),
+    ("due_date", "Due date present (gated)"), ("past_due", "Past due date"),
+    ("has_release", "Belongs to a release"),
 ]
 
 
@@ -577,7 +578,11 @@ MYDAY_TMPL = """
   <button type="button" class="chipbtn active" data-filter="all">All</button>
   <button type="button" class="chipbtn" data-filter="active">⚡ Working now</button>
   {% for cid, label in check_labels %}
+  {% if cid == 'past_due' %}
+  <button type="button" class="chipbtn" data-filter="past_due">Past due</button>
+  {% else %}
   <button type="button" class="chipbtn" data-filter="{{ cid }}">Missing: {{ label|replace('Belongs to a release','release')|replace('Due date set','due date')|replace('Status classified','status')|replace('Comment today','comment')|replace('Within aging threshold','within threshold') }}</button>
+  {% endif %}
   {% endfor %}
   <button type="button" class="chipbtn" data-filter="stale">Stale</button>
 </div>
