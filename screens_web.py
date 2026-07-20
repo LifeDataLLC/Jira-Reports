@@ -757,7 +757,7 @@ ATTN_TMPL = """
   {% for k in d.kinds %}<option value="{{ k }}" {% if request.args.get('reason')==k %}selected{% endif %}>{{ k }}</option>{% endfor %}
   </select></label>""") + """
 <div class="sectionbox" style="padding:10px 14px;margin-bottom:14px">
-  <p class="muted" style="margin:0">This board surfaces <b>active work that needs a nudge</b> — tickets that are aging, silent, overdue, blocked, or missing a release. It's scoped to work that's underway or bounced back, so <b>not-yet-started backlog (To&nbsp;Do)</b> and completed tickets don't appear here.</p>
+  <p class="muted" style="margin:0">This board surfaces <b>open tickets that need a nudge</b> — aging, silent, overdue, blocked, or missing a release. It covers work that's <b>in progress, paused, or bounced back from QA</b>, so the <b>not-yet-started backlog (To&nbsp;Do)</b> and completed tickets don't appear here.</p>
 </div>
 <p class="muted">{{ d.rows|length }} ticket(s) need attention. <a href="/api/v2/attention.csv?{{ request.query_string.decode() }}" download>Download CSV</a></p>
 <table>
