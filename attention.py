@@ -3,8 +3,8 @@ attention.py
 ------------
 Attention Board engine (PRD v3 FR-A1/A2): every non-done ticket evaluated
 against reason rules; reasons stack per ticket; severity = max(days over
-threshold). Phase 1 ships Silent + Aging; Overdue / Blocked / Missing dates /
-Needs disposition are added by Phase 4 behind their gates.
+threshold). Phase 1 ships Silent + Aging; Overdue / Blocked / Missing dates
+are added by Phase 4 behind their gates.
 """
 
 from __future__ import annotations
@@ -144,10 +144,6 @@ def board(issues, developer=None, reason_filter=None, match=None, now=None) -> d
         if developer and match and not match(developer, i.assignee, i.assignee_id):
             continue
         reasons = _reasons_for(i, now)
-        dispo = disposition_state(i, now) if any(r["kind"] == "aging" for r in reasons) else None
-        if dispo and dispo["state"] == "needs_disposition":
-            reasons.append({"tag": "Needs disposition", "kind": "disposition",
-                            "severity": dispo["hours_open"] / 24})
         if not reasons:
             continue
         if reason_filter and not any(r["kind"] == reason_filter or

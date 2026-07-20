@@ -763,7 +763,7 @@ ATTN_TMPL = """
 <tr>
  <td><a href="{{ r.issue.url }}" target="_blank">{{ r.issue.key }}</a></td>
  <td>{{ r.issue.summary }}</td><td>{{ r.issue.assignee }}</td><td>{{ r.issue.status }}</td>
- <td>{% for reason in r.reasons %}<span class="chip {{ 'bad' if reason.kind in ('silent','aging','overdue','disposition','not_paused') else 'warn' }}">⚠ {{ reason.tag }}</span>{% endfor %}</td>
+ <td>{% for reason in r.reasons %}<span class="chip {{ 'bad' if reason.kind in ('silent','aging','overdue','not_paused') else 'warn' }}">⚠ {{ reason.tag }}</span>{% endfor %}</td>
  <td><button type="button" class="btn-ghost nudge" data-msg="Hi! Quick check on {{ r.issue.key }} ({{ r.issue.summary|replace('\"','') }}) — it's showing {{ r.reasons|map(attribute='tag')|join(', ') }}. Could you add an update, or move it to Backlog / set a new start date if it's parked? Thanks! {{ r.issue.url }}">Copy nudge</button></td>
 </tr>
 {% else %}<tr><td colspan="6" class="muted">Nothing needs attention. 🎉</td></tr>{% endfor %}
