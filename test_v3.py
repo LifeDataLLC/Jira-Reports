@@ -386,13 +386,16 @@ def test_planning_gated():
         (2, "Jane Doe", "status", "To Do", "Development / In Design")])
     d = attention.board(dr.load_dev_issues([over]), now=now)
     kinds = {r["kind"] for row in d["rows"] for r in row["reasons"]}
-    check("overdue reason when gate on", "overdue" in kinds)
+    check("past-due reason raised", "past_due" in kinds)
     s["gates"]["due_dates_required"] = False
     s["gates"]["start_dates_required"] = False
     st.save(s)
     d2 = attention.board(dr.load_dev_issues([over]), now=now)
     kinds2 = {r["kind"] for row in d2["rows"] for r in row["reasons"]}
-    check("overdue dark when gate off", "overdue" not in kinds2)
+    # Past due is ungated (matches My Day's "Past due date" check); the gated
+    # "missing dates" reason goes dark.
+    check("past due stays on when the due-date gate is off", "past_due" in kinds2)
+    check("missing-dates dark when gate off", "dates" not in kinds2)
 
 
 def test_dev_team_rules():
@@ -433,7 +436,9 @@ def test_dev_team_rules():
                       events=[(2, "Jane Doe", "status", "To Do", "Development / In Design")])
     d = attention.board(dr.load_dev_issues([overnight]), now=now)
     kinds = {r["kind"] for row in d["rows"] for r in row["reasons"]}
-    check("Rule 3: not-paused attention reason (left active overnight)", "not_paused" in kinds)
+    # Rule 3 (pause at end of day) is retired: it flagged every legitimate
+    # multi-day task, and its My Day counterpart was already removed.
+    check("Rule 3: not-paused reason retired", "not_paused" not in kinds)
 
     # Rule 5: belongs to a release.
     no_rel = mkraw("R5-1", "Development / In Design", "In Progress", duedate="2026-08-01",

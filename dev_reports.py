@@ -217,11 +217,29 @@ def load_dev_issues(raw_list, custom_fields=None) -> list[DevIssue]:
 # ---------------------------------------------------------------------------
 
 def _dev_match(q: str | None, name: str, account_id: str = "") -> bool:
-    """Developer filter: accountId exact or display-name substring, per the spec."""
+    """Developer filter: accountId exact or display-name substring, per the spec.
+
+    The name half matches whole words rather than any substring, so typing a
+    first name still works but "Sam" no longer also matches "Samantha". The v3
+    screens pick from a dropdown and use the stricter dev_match_exact()."""
     if not q:
         return True
     q = q.strip().lower()
-    return q == (account_id or "").lower() or q in (name or "").lower()
+    if q == (account_id or "").lower():
+        return True
+    full = (name or "").strip().lower()
+    return q == full or q in full.split()
+
+
+def dev_match_exact(q: str | None, name: str, account_id: str = "") -> bool:
+    """Strict developer filter for UI-selected developers: the dropdown supplies
+    an accountId (or an exact display name), so match exactly and never by
+    substring — otherwise one developer's view can pull in a colleague whose name
+    merely contains theirs."""
+    if not q:
+        return True
+    q = q.strip().lower()
+    return q == (account_id or "").lower() or q == (name or "").strip().lower()
 
 
 def _in_range(ts, start, end) -> bool:

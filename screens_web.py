@@ -680,7 +680,7 @@ def my_day_screen():
     start, end = _day_range_arg()
     show_all = request.args.get("all") == "1"
     _psel, scope = current_project_selection()
-    d = (checklist.my_day(_issues(scope), selected_dev, start, end, dr._dev_match,
+    d = (checklist.my_day(_issues(scope), selected_dev, start, end, dr.dev_match_exact,
                           show_all=show_all)
          if selected_dev else None)
     # The comment check's label follows the selected window ("Comment today" /
@@ -693,10 +693,13 @@ def my_day_screen():
 
 
 def _day_arg():
+    """The roll-up's single day. Falls back to the end of a My Day date range so
+    following the 'team roll-up' link keeps the dates you were looking at,
+    instead of silently snapping back to today."""
     try:
         return dt.date.fromisoformat(request.args.get("day", ""))
     except ValueError:
-        return dt.datetime.now(dt.timezone.utc).date()
+        return _day_range_arg()[1]
 
 
 def _day_range_arg():
@@ -767,7 +770,7 @@ def _feed_rows():
     project, developer, start, end = parse_filters()
     if not start and not end:
         start = A.now_utc() - dt.timedelta(days=7)  # default window keeps it fast
-    return activity.build_feed(_issues(project), developer, start, end, dr._dev_match)
+    return activity.build_feed(_issues(project), developer, start, end, dr.dev_match_exact)
 
 
 @v3.route("/my-day/feed")
@@ -786,7 +789,7 @@ def feed_csv():
 def myday_json():
     project, developer, _s, _e = parse_filters()
     start, end = _day_range_arg()
-    d = checklist.my_day(_issues(project), developer, start, end, dr._dev_match,
+    d = checklist.my_day(_issues(project), developer, start, end, dr.dev_match_exact,
                          show_all=request.args.get("all") == "1")
     return jsonify({"start": d["start"].isoformat(), "end": d["end"].isoformat(),
                     "total_fails": d["total_fails"],
@@ -816,7 +819,7 @@ ATTN_TMPL = """
 <tr>
  <td><a href="{{ r.issue.url }}" target="_blank">{{ r.issue.key }}</a></td>
  <td>{{ r.issue.summary }}</td><td>{{ r.issue.assignee }}</td><td>{{ r.issue.status }}</td>
- <td>{% for reason in r.reasons %}<span class="chip {{ 'bad' if reason.kind in ('silent','aging','overdue','not_paused') else 'warn' }}">⚠ {{ reason.tag }}</span>{% endfor %}</td>
+ <td>{% for reason in r.reasons %}<span class="chip {{ 'bad' if reason.kind in ('silent','aging','past_due') else 'warn' }}" title="{{ reason_help.get(reason.kind, '') }}">⚠ {{ reason.tag }}</span>{% endfor %}</td>
  <td><button type="button" class="btn-ghost nudge" data-msg="Hi! Quick check on {{ r.issue.key }} ({{ r.issue.summary|replace('\"','') }}) — it's showing {{ r.reasons|map(attribute='tag')|join(', ') }}. Could you add an update, or move it to Backlog / set a new start date if it's parked? Thanks! {{ r.issue.url }}">Copy nudge</button></td>
 </tr>
 {% else %}<tr><td colspan="6" class="muted">Nothing needs attention. 🎉</td></tr>{% endfor %}
@@ -836,12 +839,24 @@ document.addEventListener('click',function(ev){
 def _attention_board():
     project, developer, start, end = parse_filters()
     reason = (request.args.get("reason") or "").strip() or None
-    return attention.board(_issues_in_range(project, start, end), developer, reason, dr._dev_match)
+    return attention.board(_issues_in_range(project, start, end), developer, reason, dr.dev_match_exact)
+
+
+# Attention reason kind -> glossary term, so every chip explains itself on hover.
+_REASON_HELP_TERMS = {"silent": "silent", "aging": "aging", "past_due": "past_due",
+                      "no_release": "no_release", "dates": "missing_dates",
+                      "blocked": "blocked", "blocked_hint": "blocked"}
+
+
+def _reason_help() -> dict:
+    from metrics_glossary import GLOSSARY
+    return {kind: GLOSSARY.get(term, "") for kind, term in _REASON_HELP_TERMS.items()}
 
 
 @v3.route("/attention")
 def attention_screen():
-    return page(ATTN_TMPL, active="/attention", d=_attention_board())
+    return page(ATTN_TMPL, active="/attention", d=_attention_board(),
+                reason_help=_reason_help())
 
 
 @v3.route("/api/v2/attention.csv")
@@ -941,7 +956,7 @@ def planning_screen():
     from metrics_glossary import gloss
     project, developer, start, end = parse_filters()
     issues = _issues_in_range(project, start, end)
-    h = pl.hygiene(issues, developer, dr._dev_match)
+    h = pl.hygiene(issues, developer, dr.dev_match_exact)
     return page(PLANNING_TMPL, active="/planning", h=h, g=gloss,
                 sprints_enabled=st.gate("sprints_enabled"),
                 dates_on=st.gate("due_dates_required") or st.gate("start_dates_required"),
@@ -998,9 +1013,9 @@ def _qa_data():
     issues = _issues_in_range(project, start, end)  # edited-in-range ticket filter
     if not start and not end:
         start = A.now_utc() - dt.timedelta(days=14)  # default window for the feeds
-    return (qh.handoff_feed(issues, developer, start, end, dr._dev_match),
-            qh.returned_feed(issues, developer, start, end, dr._dev_match),
-            qh.return_rates(issues, start, end))
+    return (qh.handoff_feed(issues, developer, start, end, dr.dev_match_exact),
+            qh.returned_feed(issues, developer, start, end, dr.dev_match_exact),
+            qh.return_rates(issues, start, end, developer, dr.dev_match_exact))
 
 
 @v3.route("/qa")
@@ -1223,10 +1238,10 @@ def _flow_data():
     project, developer, start, end = parse_filters()
     issues = _issues_in_range(project, start, end)  # edited-in-range ticket filter
     win_start = start if (start or end) else A.now_utc() - dt.timedelta(days=30)
-    rows = fq.cycle_rows(issues, developer, win_start, end, dr._dev_match)
+    rows = fq.cycle_rows(issues, developer, win_start, end, dr.dev_match_exact)
     focus = dr.developer_focus(issues, developer=developer, start=win_start, end=end)["rows"]
     return (rows, fq.cycle_stats(rows), fq.bottleneck(issues),
-            fq.multiple_active(issues, developer, dr._dev_match), focus)
+            fq.multiple_active(issues, developer, dr.dev_match_exact), focus)
 
 
 @v3.route("/flow")
@@ -1301,8 +1316,9 @@ def _quality_data():
     import flow_quality as fq
     project, developer, start, end = parse_filters()
     issues = _issues_in_range(project, start, end)  # edited-in-range ticket filter
-    return (fq.bug_lens(issues, developer, start, end, dr._dev_match),
-            fq.reopen_loops(issues), fq.return_trend(issues))
+    return (fq.bug_lens(issues, developer, start, end, dr.dev_match_exact),
+            fq.reopen_loops(issues, developer, dr.dev_match_exact),
+            fq.return_trend(issues))
 
 
 @v3.route("/quality")
@@ -1378,7 +1394,8 @@ def trends_screen():
     import flow_quality as fq
     import snapshots as sn
     meeting = request.args.get("meeting") == "1"
-    issues = _issues(None)
+    _psel, scope = current_project_selection()   # respect the project dropdown
+    issues = _issues(scope)
     agg = sn.compute_aggregates(issues)
     wow = sn.week_over_week()
     def metric(key, label, value, invert=False):

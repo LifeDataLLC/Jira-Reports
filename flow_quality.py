@@ -141,10 +141,13 @@ def bug_lens(issues, developer=None, start=None, end=None, match=None) -> list[d
     return rows
 
 
-def reopen_loops(issues) -> list[dict]:
-    """FR-QL2: tickets with >=2 rework cycles, highlighted."""
+def reopen_loops(issues, developer=None, match=None) -> list[dict]:
+    """FR-QL2: tickets with >=2 rework cycles, highlighted. `developer`/`match`
+    restrict it to one person's tickets — the table shows assignees, so an
+    employee locked to their own developer must not see the whole team's."""
     rows = [{"issue": i, "loops": i.timeline.reopened_count}
-            for i in issues if i.timeline.reopened_count >= 2]
+            for i in issues if i.timeline.reopened_count >= 2
+            and not (developer and match and not match(developer, i.assignee, i.assignee_id))]
     rows.sort(key=lambda r: -r["loops"])
     return rows
 

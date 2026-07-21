@@ -31,15 +31,7 @@ def _reasons_for(issue, now) -> list[dict]:
                 reasons.append({"tag": f"Silent {silent_days:.0f}d",
                                 "kind": "silent", "severity": silent_days - n})
 
-    # Rule 3: active ticket not paused (left in an active status overnight).
-    if st.is_active_status(issue.status):
-        entered = issue.status_events[-1][0] if issue.status_events else issue.created
-        if entered and entered.date() < now.date():
-            days = (now - entered).total_seconds() / 86400
-            reasons.append({"tag": f"Not paused {days:.0f}d",
-                            "kind": "not_paused", "severity": days})
-
-    # Rule 5: work in flight with no release assigned.
+    # Rule 5: work underway with no release assigned.
     if bucket in ("active_dev", "rework", "qa_stage") and not issue.has_release:
         reasons.append({"tag": "No release", "kind": "no_release", "severity": 0.5})
 
@@ -53,10 +45,12 @@ def _reasons_for(issue, now) -> list[dict]:
                 reasons.append({"tag": f"Aging {days_in:.0f}d",
                                 "kind": "aging", "severity": days_in - thr})
 
-    # Overdue (gated on due dates — Phase 4 lights this up via the gate)
-    if st.gate("due_dates_required") and issue.duedate and issue.duedate < now.date():
+    # Past due — same concept and wording as My Day's "Past due date" check, and
+    # ungated to match it: a due date someone set and then blew past is always
+    # worth flagging, whether or not due dates are mandatory.
+    if issue.duedate and issue.duedate < now.date():
         over = (now.date() - issue.duedate).days
-        reasons.append({"tag": f"Overdue {over}d", "kind": "overdue", "severity": float(over)})
+        reasons.append({"tag": f"Past due {over}d", "kind": "past_due", "severity": float(over)})
 
     # Blocked: Jira Flagged field primary; labels are low-confidence hints
     flag_state, flag_ts = False, None

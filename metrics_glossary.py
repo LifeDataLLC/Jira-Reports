@@ -21,9 +21,20 @@ GLOSSARY = {
                  "'active' — an open ticket may be paused or waiting, not being worked right now.",
     "eod_signal": "Evidence a ticket was touched that day — a comment, worklog, status change, "
                   "or any tracked update. Measured across tickets in an active or paused status.",
-    "silent": "No activity-feed event (transition, comment, worklog, field change) in N days "
-              "while the ticket sits in an active development or rework status.",
-    "aging": "Time in the current status exceeds that status's configured threshold.",
+    "silent": "Nobody has touched the ticket at all — no transition, comment, worklog or field "
+              "change — for the configured number of days. Compare with 'stale', which looks "
+              "only at status changes.",
+    "stale": "The ticket has not CHANGED STATUS for the configured number of days. It may still "
+             "have comments or worklogs — it just isn't moving through the workflow. Compare "
+             "with 'silent', which means no activity of any kind.",
+    "aging": "Time in the current status exceeds that status's configured threshold — this step "
+             "is taking longer than it should, regardless of any due date.",
+    "past_due": "The ticket's due date has passed. About the committed date, not how long it has "
+                "sat in a status (that's 'aging').",
+    "no_release": "The ticket isn't assigned to a release (fixVersion). Checked once work is "
+                  "underway — development, rework, or the QA pipeline.",
+    "missing_dates": "A ticket in development or rework without the dates the team requires "
+                     "(start and/or due), so it can't be planned against.",
     "handoff": "Any transition entering the QA stage, credited to whoever performed it "
                "(the changelog author), not the current assignee.",
     "handoff_check": "Binary Pass / Needs info: a comment by the handoff author within the "
@@ -39,8 +50,6 @@ GLOSSARY = {
     "slip": "Current due date minus the original (first-ever) due date, with the push count.",
     "reschedule_count": "How many times the planned start date was moved. A prioritization signal, "
                         "not a developer problem.",
-    "eod_pause": "Active tickets must be moved to their paused status at end of day "
-                 "(and back to active when resumed). Flags tickets left in an active status overnight.",
     "has_release": "Every ticket must belong to a release (fixVersion) — an upcoming feature, "
                    "bug, or the next backlog release.",
     "one_active": "One ticket active at a time per lane: dev (In Progress/Development), QA, "

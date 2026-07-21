@@ -108,11 +108,16 @@ def evaluate_ticket(issue, start: dt.date, end: dt.date | None = None, now=None)
 
     add("comment_today", "pass" if any(e.kind == "comment" for e in window_events) else "fail")
 
-    if gates.get("due_dates_required"):
+    # Scoped to the same buckets the Attention Board's "Missing dates" rule uses,
+    # so a ticket can't be red here yet absent there (dates are planned while the
+    # work is being built, not after it's handed off).
+    if not gates.get("due_dates_required"):
+        add("due_date", "na", "due dates not required")
+    elif bucket not in ("active_dev", "rework"):
+        add("due_date", "na", "only required while in development or rework")
+    else:
         add("due_date", "pass" if issue.duedate else "fail",
             "" if issue.duedate else "missing due date")
-    else:
-        add("due_date", "na", "due dates not required")
 
     # Past due: a due date exists and is in the past. Independent of the due-date
     # gate — if someone set a due date and it slipped, that's always worth a flag.
@@ -124,10 +129,14 @@ def evaluate_ticket(issue, start: dt.date, end: dt.date | None = None, now=None)
     else:
         add("past_due", "pass", f"due {issue.duedate.isoformat()}")
 
-    # Every ticket must belong to a release (fixVersion).
-    add("has_release", "pass" if issue.has_release else "fail",
-        (", ".join(issue.fix_versions)) if issue.has_release
-        else "not assigned to a feature/bug/backlog release")
+    # Work in the pipeline must belong to a release (fixVersion) — same buckets as
+    # the Attention Board's "No release" rule, so the two screens agree.
+    if bucket not in ("active_dev", "rework", "qa_stage"):
+        add("has_release", "na", "only required once work is underway")
+    else:
+        add("has_release", "pass" if issue.has_release else "fail",
+            (", ".join(issue.fix_versions)) if issue.has_release
+            else "not assigned to a feature/bug/backlog release")
 
     # Time in the current status: drives "stale" and, for active tickets, the
     # "how long it's been active" readout on the card.

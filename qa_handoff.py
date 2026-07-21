@@ -96,14 +96,19 @@ def returned_feed(issues, developer=None, start=None, end=None, match=None) -> l
     return out
 
 
-def return_rates(issues, start=None, end=None) -> list[dict]:
+def return_rates(issues, start=None, end=None, developer=None, match=None) -> list[dict]:
     """FR-Q4: return-rate by developer — attribution to whoever authored the most
-    recent handoff before each return. Raw counts always shown with the rate."""
+    recent handoff before each return. Raw counts always shown with the rate.
+
+    `developer`/`match` restrict the table to one person — employees are locked to
+    their own developer, so this table must not expose the whole team to them."""
     handoffs, returns = {}, {}
+    author_ids = {}
     for i in issues:
         last_handoff_author = None
         for ts, author, aid, frm, to in i.status_events:
             in_window = (not start or ts >= start) and (not end or ts < end)
+            author_ids.setdefault(author, aid)
             if _is_handoff(frm, to):
                 last_handoff_author = author
                 if in_window:
@@ -112,6 +117,8 @@ def return_rates(issues, start=None, end=None) -> list[dict]:
                 returns[last_handoff_author] = returns.get(last_handoff_author, 0) + 1
     rows = []
     for dev in sorted(set(handoffs) | set(returns)):
+        if developer and match and not match(developer, dev, author_ids.get(dev, "")):
+            continue
         h, r = handoffs.get(dev, 0), returns.get(dev, 0)
         rows.append({"developer": dev, "handoffs": h, "returns": r,
                      "rate_pct": round(100 * r / h) if h else None,

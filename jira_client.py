@@ -226,7 +226,7 @@ def clear_cache() -> None:
     """Drop all cached fetches, memory AND disk (e.g. to force a fresh pull —
     the disk file must go too, or a restart would resurrect data fetched under
     old settings such as a different project selection). Bumps the generation
-    so fetches already in flight are discarded instead of stored."""
+    so fetches already running are discarded instead of stored."""
     global _cache_gen
     with _cache_lock:
         _cache_store.clear()
