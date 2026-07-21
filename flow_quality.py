@@ -95,6 +95,10 @@ def multiple_active(issues, developer=None, match=None) -> list[dict]:
     by = {}
     for i in issues:
         if st.is_active_status(i.status) and i.assignee != "Unassigned":
+            # Developers hidden in Settings (past employees) stay out of here too,
+            # not just out of the My Day dropdown.
+            if st.is_developer_hidden(i.assignee, i.assignee_id):
+                continue
             by.setdefault((i.assignee, i.assignee_id, st.lane_of(i.status)), []).append(i)
     rows = []
     for (name, aid, lane), tickets in sorted(by.items(), key=lambda kv: -len(kv[1])):

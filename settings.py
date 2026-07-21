@@ -246,6 +246,18 @@ def lane_of(status: str) -> str | None:
     return a.get("lane") if a else None
 
 
+def is_developer_hidden(name: str = "", account_id: str = "") -> bool:
+    """True if this developer is hidden in Settings (e.g. a past employee).
+
+    Matches on accountId OR display name — the same way the My Day dropdown
+    hides them — because the stored value may be either."""
+    hidden = load().get("hidden_developers") or []
+    if not hidden:
+        return False
+    hidden = set(hidden)
+    return (account_id or "") in hidden or (name or "") in hidden
+
+
 def lane_label(status: str) -> str | None:
     """Friendly lane name for an active status (e.g. 'Development'), or None."""
     lane = lane_of(status)
