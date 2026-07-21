@@ -170,10 +170,20 @@ def load(path: str | None = None) -> dict:
 def save(data: dict, path: str | None = None) -> None:
     path = path or CONFIG_PATH
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w") as fh:
-        json.dump(data, fh, indent=2, sort_keys=True)
-    os.replace(tmp, path)
+    # Unique temp name per writer: a shared "<path>.tmp" makes two concurrent
+    # savers (e.g. a request and the startup warm thread) clobber each other's
+    # temp file, so one os.replace fails with FileNotFoundError.
+    tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
+    try:
+        with open(tmp, "w") as fh:
+            json.dump(data, fh, indent=2, sort_keys=True)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
     with _lock:
         _cache.update(data=data, path=path)
         try:

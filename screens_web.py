@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime as dt
 import secrets
+import threading
 
 from flask import Blueprint, Response, jsonify, redirect, render_template_string, request
 
@@ -27,8 +28,30 @@ import settings as st
 v3 = Blueprint("v3", __name__)
 
 
+_parsed_lock = threading.Lock()
+_parsed_cache: dict = {}   # scope -> (raw_list, custom_fields, parsed_issues)
+
+
 def _issues(project=None):
-    return dr.load_dev_issues(jc.fetch_dev_dataset(project), jc.detect_custom_fields())
+    """Parsed DevIssues for a project scope, memoized against the raw dataset.
+
+    Turning the raw Jira payload into DevIssues (changelog → events, comments,
+    and a full Timeline per ticket) costs ~1s for a few thousand tickets, and it
+    used to run on EVERY request even though the raw data was already cached.
+    jira_client hands back the same list object until a refresh replaces it, so
+    an identity check tells us whether the parse is still valid — we hold a
+    reference to that list, which keeps the identity comparison sound.
+    """
+    raw = jc.fetch_dev_dataset(project)
+    cf = jc.detect_custom_fields()
+    with _parsed_lock:
+        hit = _parsed_cache.get(project)
+        if hit is not None and hit[0] is raw and hit[1] == cf:
+            return hit[2]
+    parsed = dr.load_dev_issues(raw, cf)      # parse outside the lock
+    with _parsed_lock:
+        _parsed_cache[project] = (raw, cf, parsed)
+    return parsed
 
 
 def _issues_in_range(project, start, end):

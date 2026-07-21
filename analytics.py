@@ -23,10 +23,38 @@ import config as cfg
 # ---------------------------------------------------------------------------
 
 def parse_ts(ts):
+    """Parse a Jira timestamp ('2026-07-21T10:20:30.000+0000').
+
+    Hand-rolled rather than strptime: this runs ~80k times per page load and
+    strptime is ~20x slower (it re-does locale + regex work on every call), which
+    made timestamp parsing the single biggest cost of rendering a page. Falls
+    back to strptime for anything that doesn't match the expected shape.
+    """
     if isinstance(ts, dt.datetime):
         return ts
     if not ts:
         return None
+    try:
+        year, month, day = int(ts[0:4]), int(ts[5:7]), int(ts[8:10])
+        hour, minute, second = int(ts[11:13]), int(ts[14:16]), int(ts[17:19])
+        i, micro = 19, 0
+        if i < len(ts) and ts[i] == ".":
+            j = i + 1
+            while j < len(ts) and ts[j].isdigit():
+                j += 1
+            micro = int(ts[i + 1:j].ljust(6, "0")[:6])
+            i = j
+        zone = ts[i:]
+        if not zone or zone in ("Z", "z"):
+            tzinfo = dt.timezone.utc
+        else:
+            sign = -1 if zone[0] == "-" else 1
+            digits = zone[1:].replace(":", "")
+            tzinfo = dt.timezone(sign * dt.timedelta(hours=int(digits[0:2]),
+                                                     minutes=int(digits[2:4] or 0)))
+        return dt.datetime(year, month, day, hour, minute, second, micro, tzinfo)
+    except (ValueError, IndexError):
+        pass
     for fmt in ("%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z"):
         try:
             return dt.datetime.strptime(ts, fmt)

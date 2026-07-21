@@ -565,14 +565,10 @@ def get_changelog(issue_key: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def parse_ts(ts: str | None) -> dt.datetime | None:
-    if not ts:
-        return None
-    for fmt in ("%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z"):
-        try:
-            return dt.datetime.strptime(ts, fmt)
-        except ValueError:
-            continue
-    return None
+    # Shared fast parser (see analytics.parse_ts — strptime is far too slow at
+    # the volumes these reports parse).
+    import analytics
+    return analytics.parse_ts(ts)
 
 
 def days_between(a: dt.datetime | None, b: dt.datetime | None) -> float | None:
