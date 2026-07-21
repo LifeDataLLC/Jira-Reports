@@ -538,7 +538,7 @@ def settings_screen():
 
 MYDAY_TMPL = """
 <h1>My Day</h1>
-<div class="sub">{% if show_all %}All your open assigned tickets — the status of your whole workload{% else %}Tickets last touched on the chosen day, plus everything you're actively working on — clear the red items before you sign off{% endif %}{% if is_admin %} · <a href="/my-day/rollup?{{ request.query_string.decode() }}">team roll-up</a> · <a href="/my-day/feed?{{ request.query_string.decode() }}">activity feed</a>{% endif %}</div>
+<div class="sub">{% if show_all %}All your open assigned tickets — the status of your whole workload{% else %}Tickets edited in the selected dates, plus everything you're actively working on — clear the red items before you sign off{% endif %}{% if is_admin %} · <a href="/my-day/rollup?{{ request.query_string.decode() }}">team roll-up</a> · <a href="/my-day/feed?{{ request.query_string.decode() }}">activity feed</a>{% endif %}</div>
 <form method="get" class="filterbar">
   <label>Project
     <select name="project" onchange="this.form.submit()">
@@ -549,7 +549,8 @@ MYDAY_TMPL = """
     {% if is_admin %}<option value="">— select a developer —</option>{% endif %}
     {% for o in dev_options %}<option value="{{ o.id }}" {% if o.id == selected_dev %}selected{% endif %}>{{ o.name }}</option>{% endfor %}
   </select></label>
-  <label>Day<input type="date" name="day" value="{{ request.args.get('day','') }}" {% if show_all %}disabled title="Not used while showing all assigned tickets"{% endif %} onchange="this.form.submit()"></label>
+  <label>From<input type="date" name="start" value="{{ request.args.get('start','') }}" {% if show_all %}disabled title="Not used while showing all assigned tickets"{% endif %} onchange="this.form.submit()"></label>
+  <label>To<input type="date" name="end" value="{{ request.args.get('end','') }}" {% if show_all %}disabled title="Not used while showing all assigned tickets"{% endif %} onchange="this.form.submit()"></label>
   <label style="display:flex;flex-direction:row;align-items:center;gap:6px;font-size:13px;color:var(--ink);font-weight:500;align-self:flex-end;padding-bottom:7px">
     <input type="checkbox" name="all" value="1" style="width:auto;margin:0;padding:0;box-shadow:none" {% if show_all %}checked{% endif %} onchange="this.form.submit()"> Show all assigned tickets
   </label>
@@ -653,14 +654,19 @@ def my_day_screen():
         # Employees are locked to their linked developer, regardless of the URL.
         dev_options = [{"id": own, "name": own_name}] if own else []
         selected_dev = own or ""
-    day = _day_arg()
+    start, end = _day_range_arg()
     show_all = request.args.get("all") == "1"
     _psel, scope = current_project_selection()
-    d = (checklist.my_day(_issues(scope), selected_dev, day, dr._dev_match, show_all=show_all)
+    d = (checklist.my_day(_issues(scope), selected_dev, start, end, dr._dev_match,
+                          show_all=show_all)
          if selected_dev else None)
+    # The comment check's label follows the selected window ("Comment today" /
+    # "Comment on Jul 05" / "Comment in range") — keep the filter chips in step.
+    labels = dict(checklist.CHECK_LABELS)
+    labels["comment_today"] = checklist.comment_check_label(start, end)
     return page(MYDAY_TMPL, active="/my-day", d=d, g=gloss, show_all=show_all,
                 is_admin=is_admin, dev_options=dev_options, selected_dev=selected_dev,
-                check_labels=[(cid, checklist.CHECK_LABELS[cid]) for cid in checklist.CHECK_ORDER])
+                check_labels=[(cid, labels[cid]) for cid in checklist.CHECK_ORDER])
 
 
 def _day_arg():
@@ -668,6 +674,25 @@ def _day_arg():
         return dt.date.fromisoformat(request.args.get("day", ""))
     except ValueError:
         return dt.datetime.now(dt.timezone.utc).date()
+
+
+def _day_range_arg():
+    """(start, end) dates for My Day. Neither given -> today..today; only a start
+    -> start..today; only an end -> that single day. Reversed input is tolerated."""
+    def d(v):
+        try:
+            return dt.date.fromisoformat(v) if v else None
+        except ValueError:
+            return None
+    today = dt.datetime.now(dt.timezone.utc).date()
+    s, e = d(request.args.get("start")), d(request.args.get("end"))
+    if not s and not e:
+        return today, today
+    if s and not e:
+        return s, max(s, today)
+    if e and not s:
+        return e, e
+    return (s, e) if s <= e else (e, s)
 
 
 ROLLUP_TMPL = """
@@ -737,9 +762,11 @@ def feed_csv():
 @v3.route("/api/v2/myday.json")
 def myday_json():
     project, developer, _s, _e = parse_filters()
-    d = checklist.my_day(_issues(project), developer, _day_arg(), dr._dev_match,
+    start, end = _day_range_arg()
+    d = checklist.my_day(_issues(project), developer, start, end, dr._dev_match,
                          show_all=request.args.get("all") == "1")
-    return jsonify({"day": d["day"].isoformat(), "total_fails": d["total_fails"],
+    return jsonify({"start": d["start"].isoformat(), "end": d["end"].isoformat(),
+                    "total_fails": d["total_fails"],
                     "rows": [{"key": r["issue"].key, "fails": r["fails"],
                               "checks": [{"id": c, "label": l, "state": s, "why": w}
                                          for c, l, s, w in r["checks"]]} for r in d["rows"]]})

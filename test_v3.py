@@ -159,7 +159,7 @@ def test_checklist():
                 events=[(0, "Jane Doe", "status", "To Do", "Mystery Status")])
     issues = dr.load_dev_issues([good, bad])
 
-    d = checklist.my_day(issues, "jane", today, dr._dev_match, now=now)
+    d = checklist.my_day(issues, "jane", today, today, dr._dev_match, now=now)
     rows = {r["issue"].key: r for r in d["rows"]}
     g = dict((c[0], c[2]) for c in rows["C-1"]["checks"])
     check("comment today pass", g["comment_today"] == "pass")

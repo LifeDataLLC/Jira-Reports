@@ -27,9 +27,20 @@ CHECK_LABELS = {
 }
 
 
-def _day_bounds(day: dt.date):
-    d0 = dt.datetime.combine(day, dt.time.min, tzinfo=dt.timezone.utc)
-    return d0, d0 + dt.timedelta(days=1)
+def _range_bounds(start: dt.date, end: dt.date):
+    """UTC datetime bounds [d0, d1) covering start..end inclusive."""
+    d0 = dt.datetime.combine(start, dt.time.min, tzinfo=dt.timezone.utc)
+    d1 = dt.datetime.combine(end, dt.time.min, tzinfo=dt.timezone.utc) + dt.timedelta(days=1)
+    return d0, d1
+
+
+def comment_check_label(start: dt.date, end: dt.date, today: dt.date | None = None) -> str:
+    """Label for the comment check, adapted to the selected window — the check
+    means 'was this ticket commented on within the window you're looking at'."""
+    today = today or A.now_utc().date()
+    if start != end:
+        return "Comment in range"
+    return "Comment today" if start == today else f"Comment on {start:%b %d}"
 
 
 def _ago(ts, now=None) -> str:
@@ -73,25 +84,29 @@ def _is_flagged(issue) -> bool:
                         for l in issue.labels)
 
 
-def evaluate_ticket(issue, day: dt.date, now=None) -> dict:
-    """Checklist row for one ticket on one day. Returns
-    {issue, bucket, checks: [(id,label,state,why)], fails, eod_signal}."""
+def evaluate_ticket(issue, start: dt.date, end: dt.date | None = None, now=None) -> dict:
+    """Checklist row for one ticket over a date window (end defaults to start, i.e.
+    a single day). Returns {issue, bucket, checks: [(id,label,state,why)], fails,
+    eod_signal}."""
+    end = end or start
     s = st.load()
     gates, items = s["gates"], s["checklist_items"]
-    d0, d1 = _day_bounds(day)
+    d0, d1 = _range_bounds(start, end)
     events = activity.events_for(issue)
-    today_events = [e for e in events if d0 <= e.ts < d1]
+    window_events = [e for e in events if d0 <= e.ts < d1]
     bucket = st.bucket_of(issue.status, issue.category)
     checks = []
+    labels = dict(CHECK_LABELS)
+    labels["comment_today"] = comment_check_label(start, end, (now or A.now_utc()).date())
 
     def add(cid, state, why=""):
         if items.get(cid, True):
-            checks.append((cid, CHECK_LABELS[cid], state, why))
+            checks.append((cid, labels[cid], state, why))
 
     add("status_mapped", "pass" if bucket else "fail",
         "" if bucket else "status not classified in Settings")
 
-    add("comment_today", "pass" if any(e.kind == "comment" for e in today_events) else "fail")
+    add("comment_today", "pass" if any(e.kind == "comment" for e in window_events) else "fail")
 
     if gates.get("due_dates_required"):
         add("due_date", "pass" if issue.duedate else "fail",
@@ -125,7 +140,7 @@ def evaluate_ticket(issue, day: dt.date, now=None) -> dict:
     # and the date filter.
     last_activity = events[-1].ts if events else (issue.updated or issue.created)
 
-    eod_signal = bool(today_events)
+    eod_signal = bool(window_events)
     return {"issue": issue, "bucket": bucket, "checks": checks,
             "active": active,
             "lane": st.lane_label(issue.status),
@@ -137,20 +152,21 @@ def evaluate_ticket(issue, day: dt.date, now=None) -> dict:
             "eod_signal": eod_signal}
 
 
-def my_day(issues, developer, day: dt.date, match, now=None, show_all=False) -> dict:
+def my_day(issues, developer, start: dt.date, end: dt.date, match, now=None,
+           show_all=False) -> dict:
     """Checklist rows for one developer's open, assigned work: anything in an
     active status (currently working), paused, in the QA pipeline, or reopened.
     To Do and Done are excluded.
 
-    The rows are filtered to those that were edited on `day` — had a comment or a
-    status change that day — EXCEPT tickets in an active status, which are always
-    shown because they're what's being worked right now, even if they went active
-    on an earlier day.
+    The rows are filtered to those edited within start..end (inclusive) — had a
+    comment or a status change in that window — EXCEPT tickets in an active
+    status, which are always shown because they're what's being worked right now,
+    even if they went active before the window.
 
     With show_all=True the view instead lists EVERY open (non-done) ticket
     assigned to the developer — their whole workload, including To Do — ignoring
     both the bucket and date filters, so they can eyeball the status of everything."""
-    d0, d1 = _day_bounds(day)
+    d0, d1 = _range_bounds(start, end)
     rows = []
     for i in issues:
         b = st.bucket_of(i.status, i.category)
@@ -164,7 +180,7 @@ def my_day(issues, developer, day: dt.date, match, now=None, show_all=False) -> 
             continue
         if developer and match and not match(developer, i.assignee, i.assignee_id):
             continue
-        r = evaluate_ticket(i, day, now)
+        r = evaluate_ticket(i, start, end, now)
         if not show_all and not (r["active"] or activity.edited_in_range(i, d0, d1)):
             continue
         rows.append(r)
@@ -173,7 +189,7 @@ def my_day(issues, developer, day: dt.date, match, now=None, show_all=False) -> 
     # developer's own work).
     _min = dt.datetime.min.replace(tzinfo=dt.timezone.utc)
     rows.sort(key=lambda r: (r["active"], r["last_activity"] or _min), reverse=True)
-    return {"rows": rows, "day": day,
+    return {"rows": rows, "start": start, "end": end,
             "total_fails": sum(r["fails"] for r in rows)}
 
 
@@ -188,7 +204,7 @@ def rollup(issues, day: dt.date, now=None) -> dict:
         if not (st.is_active_status(i.status)
                 or st.bucket_of(i.status, i.category) == "paused"):
             continue
-        r = evaluate_ticket(i, day, now)
+        r = evaluate_ticket(i, day, now=now)
         d = per_dev.setdefault(i.assignee, {"tickets": 0, "signaled": 0})
         d["tickets"] += 1
         total += 1
