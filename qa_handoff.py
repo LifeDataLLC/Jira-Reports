@@ -119,6 +119,8 @@ def return_rates(issues, start=None, end=None, developer=None, match=None) -> li
     for dev in sorted(set(handoffs) | set(returns)):
         if developer and match and not match(developer, dev, author_ids.get(dev, "")):
             continue
+        if st.is_developer_hidden(dev, author_ids.get(dev, "")):   # past employees
+            continue
         h, r = handoffs.get(dev, 0), returns.get(dev, 0)
         rows.append({"developer": dev, "handoffs": h, "returns": r,
                      "rate_pct": round(100 * r / h) if h else None,

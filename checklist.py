@@ -210,6 +210,8 @@ def rollup(issues, day: dt.date, now=None) -> dict:
     nobody is actively working them."""
     per_dev, total, signaled = {}, 0, 0
     for i in issues:
+        if st.is_developer_hidden(i.assignee, i.assignee_id):   # past employees
+            continue
         if not (st.is_active_status(i.status)
                 or st.bucket_of(i.status, i.category) == "paused"):
             continue

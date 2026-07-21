@@ -691,9 +691,12 @@ def ticket_timeline(issues, issue_key=None, developer=None, start=None, end=None
 # ---------------------------------------------------------------------------
 
 def developer_focus(issues, developer=None, start=None, end=None):
+    import settings as _st
     days = {}
     def bump(ts, actor, aid, key, kind):
         if not ts or not _in_range(ts, start, end) or not _dev_match(developer, actor, aid):
+            return
+        if _st.is_developer_hidden(actor, aid):   # past employees stay hidden
             return
         d = days.setdefault((ts.date(), actor), {"tickets": set(), "status": 0,
                                                  "comments": 0, "worklogs": 0})

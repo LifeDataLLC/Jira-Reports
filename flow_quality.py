@@ -120,6 +120,8 @@ def bug_lens(issues, developer=None, start=None, end=None, match=None) -> list[d
             continue
         if developer and match and not match(developer, i.assignee, i.assignee_id):
             continue
+        if st.is_developer_hidden(i.assignee, i.assignee_id):   # past employees
+            continue
         anchor = i.resolved or i.updated or i.created
         if (start or end) and anchor and not ((not start or anchor >= start)
                                               and (not end or anchor < end)):
