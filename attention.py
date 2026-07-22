@@ -31,8 +31,8 @@ def _reasons_for(issue, now) -> list[dict]:
                 reasons.append({"tag": f"Silent {silent_days:.0f}d",
                                 "kind": "silent", "severity": silent_days - n})
 
-    # Rule 5: work underway with no release assigned.
-    if bucket in ("active_dev", "rework", "qa_stage") and not issue.has_release:
+    # Rule 5: every open ticket must have a release assigned, until resolved/done.
+    if issue.is_open and not issue.has_release:
         reasons.append({"tag": "No release", "kind": "no_release", "severity": 0.5})
 
     # Aging: over the per-status threshold
@@ -68,7 +68,7 @@ def _reasons_for(issue, now) -> list[dict]:
     missing = []
     if st.gate("start_dates_required") and bucket in ("active_dev", "rework") and not issue.start_date:
         missing.append("start")
-    if st.gate("due_dates_required") and bucket in ("active_dev", "rework") and not issue.duedate:
+    if st.gate("due_dates_required") and issue.is_open and not issue.duedate:
         missing.append("due")
     if missing:
         reasons.append({"tag": f"Missing dates ({'/'.join(missing)})",

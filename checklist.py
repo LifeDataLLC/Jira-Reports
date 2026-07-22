@@ -108,13 +108,13 @@ def evaluate_ticket(issue, start: dt.date, end: dt.date | None = None, now=None)
 
     add("comment_today", "pass" if any(e.kind == "comment" for e in window_events) else "fail")
 
-    # Scoped to the same buckets the Attention Board's "Missing dates" rule uses,
-    # so a ticket can't be red here yet absent there (dates are planned while the
-    # work is being built, not after it's handed off).
+    # Required for every open ticket until it's resolved/done — mirrors the
+    # Attention Board's "Missing dates" rule so a ticket can't be red on one screen
+    # and silent on the other.
     if not gates.get("due_dates_required"):
         add("due_date", "na", "due dates not required")
-    elif bucket not in ("active_dev", "rework"):
-        add("due_date", "na", "only required while in development or rework")
+    elif not issue.is_open:
+        add("due_date", "na", "resolved/done")
     else:
         add("due_date", "pass" if issue.duedate else "fail",
             "" if issue.duedate else "missing due date")
@@ -129,10 +129,11 @@ def evaluate_ticket(issue, start: dt.date, end: dt.date | None = None, now=None)
     else:
         add("past_due", "pass", f"due {issue.duedate.isoformat()}")
 
-    # Work in the pipeline must belong to a release (fixVersion) — same buckets as
-    # the Attention Board's "No release" rule, so the two screens agree.
-    if bucket not in ("active_dev", "rework", "qa_stage"):
-        add("has_release", "na", "only required once work is underway")
+    # Every open ticket must belong to a release (fixVersion) until it's
+    # resolved/done — same rule as the Attention Board's "No release", so the two
+    # screens agree.
+    if not issue.is_open:
+        add("has_release", "na", "resolved/done")
     else:
         add("has_release", "pass" if issue.has_release else "fail",
             (", ".join(issue.fix_versions)) if issue.has_release
