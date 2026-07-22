@@ -68,6 +68,11 @@ if os.environ.get("JIRA_API_TOKEN") and jc.CACHE_TTL > 0:
 _PUBLIC_PREFIXES = ("/login", "/register", "/logout", "/tasks/snapshot", "/static", "/favicon")
 # Admin-only areas (Settings + admin tools + the cross-team compliance views).
 _ADMIN_PREFIXES = ("/settings", "/admin", "/my-day/rollup", "/my-day/feed")
+# Until the other screens are ready, employees are limited to My Day and their own
+# account pages; every other screen (Attention, QA, Flow, etc.) is admin-only.
+# Admins are exempt from this list. Note /my-day/rollup and /my-day/feed still fall
+# under _ADMIN_PREFIXES above, so they stay admin-only even though they match here.
+_EMPLOYEE_PREFIXES = ("/my-day", "/change-password", "/logout")
 
 
 @app.before_request
@@ -85,6 +90,10 @@ def _require_login():
     if path.startswith(_ADMIN_PREFIXES) and user.get("role") != "admin":
         return ("<p style='font-family:sans-serif;margin:40px'>Admin only. "
                 "<a href='/my-day'>Go to My Day</a> · <a href='/logout'>Log out</a></p>", 403)
+    # Employees are confined to My Day (+ their account pages) until the rest ships.
+    # Any other screen — reached by URL or a stale link — sends them to My Day.
+    if user.get("role") != "admin" and path != "/" and not path.startswith(_EMPLOYEE_PREFIXES):
+        return redirect("/my-day")
 
 # ---------------------------------------------------------------------------
 # v3 migration: deprecated routes 301 to their replacement screens and log hits
@@ -573,6 +582,9 @@ HIST_TMPL = BASE_CSS + """
 def landing():
     """v0 overview retired (v3 migration): land per role (FR-X4 arrives fully in
     Phase 5; until then the settings default_role decides)."""
+    # Employees can only see My Day for now, so always land them there.
+    if auth.current_user() and not auth.is_admin():
+        return redirect("/my-day", code=302)
     import settings as _st
     role = request.args.get("role") or _st.load().get("default_role", "lead")
     target = {"developer": "/my-day", "lead": "/attention", "exec": "/exec"}.get(role, "/my-day")

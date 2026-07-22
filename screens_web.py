@@ -201,7 +201,9 @@ def page(body, active="", show_banner=True, **ctx):
     import auth
     user = auth.current_user()
     admin = bool(user and user.get("role") == "admin")
-    items = [(h, l) for h, l in NAV if not (h in ("/settings",) and not admin)]
+    # Until the other screens are ready, employees only get My Day; admins see
+    # everything. (Route access is also enforced server-side in app.py.)
+    items = list(NAV) if admin else [(h, l) for h, l in NAV if h == "/my-day"]
     navlinks = "".join(
         f'<a href="{href}" class="{"active" if href == active else ""}">{label}</a>'
         for href, label in items)
