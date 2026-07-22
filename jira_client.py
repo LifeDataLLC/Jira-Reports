@@ -317,7 +317,7 @@ def search_issues(jql: str, fields: list[str], expand_changelog: bool = False) -
 
 
 REPORT_FIELDS = ["summary", "status", "assignee", "issuetype", "priority",
-                 "created", "resolutiondate", "fixVersions", "updated"]
+                 "created", "resolutiondate", "fixVersions", "updated", "duedate"]
 
 
 @_cached
@@ -518,7 +518,9 @@ def fetch_project_versions() -> list[dict]:
 def fetch_issues_for_version(version_name: str) -> list[dict]:
     projects = " ,".join(f'"{p.strip()}"' for p in configured_projects())
     jql = f'project in ({projects}) AND fixVersion = "{version_name}"'
-    return search_issues(jql, REPORT_FIELDS, expand_changelog=False)
+    # Changelog is required so Release Readiness can compute how far each ticket
+    # has progressed (furthest stage reached), throughput, and QA bounce.
+    return search_issues(jql, REPORT_FIELDS, expand_changelog=True)
 
 
 @_cached
