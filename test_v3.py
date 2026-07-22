@@ -557,7 +557,7 @@ def test_routes():
     check("landing redirects", r.status_code == 302)
     # new screens render
     for route in ["/my-day", "/my-day/rollup", "/my-day/feed", "/attention",
-                  "/qa", "/flow", "/quality", "/release", "/planning", "/investigate", "/settings"]:
+                  "/qa", "/flow", "/quality", "/release", "/investigate", "/settings"]:
         r = c.get(route)
         check(f"200 {route}", r.status_code == 200)
     # kept routes still live

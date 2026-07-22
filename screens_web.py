@@ -891,88 +891,12 @@ SHELL_TMPL = """
 """
 
 
-PLANNING_TMPL = """
-<h1>Sprint &amp; Planning</h1>
-<div class="sub">Commitment vs completion, planning hygiene, due-date slip — process-gated features light up from <a href="/settings">Settings</a></div>
-""" + FILTER_BAR + """
-<div class="sectionbox">
-  <h2 style="margin-top:0">Commitment view</h2>
-  {% if sprints_enabled %}
-  <p>Sprint Health is enabled — <a class="btn" href="/reports/sprints">Open Sprint Health →</a></p>
-  {% else %}
-  <p class="muted"><b>Sprint boards are not configured yet.</b> To enable Sprint Commitment vs Completion:
-  create scrum boards in Jira, start real sprints, then enter the board IDs in
-  <a href="/settings">Settings</a> and turn on the <i>Sprints enabled</i> gate.
-  Until then, Release Readiness (fixVersion-based) is the commitment view:</p>
-  <a class="btn" href="/release">Release Readiness →</a>
-  {% endif %}
-</div>
-
-<h2>Planning hygiene</h2>
-{% if not dates_on and not est_on %}
-<div class="sectionbox"><p class="muted"><b>Date rules are not enforced yet.</b> When the team adopts the
-due-date / start-date policy, flip the gates in <a href="/settings">Settings</a> and this section will show:
-tickets missing dates, the due-date slip table (original vs current, pushes, slip days), and start-date
-reschedule counts. The Jira-side prerequisites are documented in <code>docs/jira_process_setup.md</code>.</p></div>
-{% else %}
-{% if h.missing %}
-<h2 style="font-size:14px">Open tickets missing dates</h2>
-<table><tr><th>Issue</th><th>Summary</th><th>Developer</th><th>Status</th><th>Missing</th></tr>
-{% for r in h.missing %}
-<tr><td><a href="{{ r.issue.url }}" target="_blank">{{ r.issue.key }}</a></td><td>{{ r.issue.summary }}</td>
-<td>{{ r.issue.assignee }}</td><td>{{ r.issue.status }}</td><td><span class="pill bad">{{ r.missing }}</span></td></tr>
-{% endfor %}</table>
-{% endif %}
-{% if slip_gate %}
-<h2 style="font-size:14px">{{ g('slip','Due-date slip')|safe }} <span class="muted">(original commitment vs today)</span></h2>
-<table><tr><th>Issue</th><th>Summary</th><th>Developer</th><th>Original due</th><th>Current due</th><th>Pushes</th><th>Slip days</th></tr>
-{% for r in h.slips %}
-<tr><td><a href="{{ r.issue.url }}" target="_blank">{{ r.issue.key }}</a></td><td>{{ r.issue.summary }}</td>
-<td>{{ r.issue.assignee }}</td><td>{{ r.original or '—' }}</td><td>{{ r.current or '—' }}</td>
-<td>{{ r.pushes }}</td><td>{% if r.slip_days %}<span class="pill {{ 'bad' if r.slip_days > 7 else 'warn' }}">{{ r.slip_days }}</span>{% else %}0{% endif %}</td></tr>
-{% else %}<tr><td colspan="7" class="muted">No due-date slips recorded.</td></tr>{% endfor %}</table>
-{% endif %}
-{% if start_gate %}
-<h2 style="font-size:14px">{{ g('reschedule_count','Start-date reschedules')|safe }}</h2>
-<table><tr><th>Issue</th><th>Summary</th><th>Developer</th><th>Reschedules</th><th>Total days pushed</th></tr>
-{% for r in h.reschedules %}
-<tr><td><a href="{{ r.issue.url }}" target="_blank">{{ r.issue.key }}</a></td><td>{{ r.issue.summary }}</td>
-<td>{{ r.issue.assignee }}</td><td><span class="pill {{ 'bad' if r.count >= 3 else 'warn' }}">{{ r.count }}</span></td><td>{{ r.days_pushed }}</td></tr>
-{% else %}<tr><td colspan="5" class="muted">No start-date reschedules recorded.</td></tr>{% endfor %}</table>
-{% endif %}
-{% if est_on %}
-<h2 style="font-size:14px">Open tickets without an estimate</h2>
-<table><tr><th>Issue</th><th>Summary</th><th>Developer</th><th>Status</th></tr>
-{% for r in h.no_estimate %}
-<tr><td><a href="{{ r.issue.url }}" target="_blank">{{ r.issue.key }}</a></td><td>{{ r.issue.summary }}</td>
-<td>{{ r.issue.assignee }}</td><td>{{ r.issue.status }}</td></tr>
-{% else %}<tr><td colspan="4" class="muted">Every open ticket has an estimate.</td></tr>{% endfor %}</table>
-{% endif %}
-{% endif %}
-"""
-
-
 @v3.route("/release")
 def release_screen():
     """Release Readiness as a top-level screen (replaces Planning in the nav)."""
     import reports_web as rw
     ctx = rw.release_context(request.args.get("version"))
     return page(rw.REL, active="/release", fmt=rw.fmt, **ctx)
-
-
-@v3.route("/planning")
-def planning_screen():
-    import planning as pl
-    from metrics_glossary import gloss
-    project, developer, start, end = parse_filters()
-    issues = _issues_in_range(project, start, end)
-    h = pl.hygiene(issues, developer, dr.dev_match_exact)
-    return page(PLANNING_TMPL, active="/planning", h=h, g=gloss,
-                sprints_enabled=st.gate("sprints_enabled"),
-                dates_on=st.gate("due_dates_required") or st.gate("start_dates_required"),
-                est_on=st.gate("estimates_used"),
-                slip_gate=st.gate("due_dates_required"),
-                start_gate=st.gate("start_dates_required"))
 
 
 # ---------------------------------------------------------------------------
