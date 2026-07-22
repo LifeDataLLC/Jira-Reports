@@ -13,6 +13,7 @@ import time
 import csv
 import datetime as dt
 import io
+import re
 
 from urllib.parse import quote
 
@@ -247,10 +248,39 @@ REL = """
 .rrw .eyebrow{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#6b756e}
 .rrw h1.rt{font-size:22px;font-weight:800;margin:2px 0 3px;letter-spacing:-.4px}
 .rrw .rsub{color:#6b756e;font-size:13.5px;margin:0 0 16px}
-.rrw .vers{display:flex;gap:7px;flex-wrap:wrap;margin:14px 0 20px}
-.rrw .vpill{font-size:12.5px;padding:6px 13px;border-radius:999px;border:1px solid #e4e7e5;background:#fff;color:#3a453e;text-decoration:none;font-weight:500}
-.rrw .vpill.active{background:#1fa963;border-color:#1fa963;color:#fff;font-weight:600}
-.rrw .vpill .rd{opacity:.7;font-size:11px;margin-left:5px}
+.rrw .rsw{display:flex;align-items:center;gap:12px;margin:14px 0 20px;flex-wrap:wrap}
+.rrw .rsw-lbl{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6b756e}
+.rrw .rsw-box{position:relative}
+.rrw .rsw-trigger{display:flex;align-items:center;gap:11px;background:#fff;border:1px solid #e4e7e5;border-radius:10px;padding:9px 12px;cursor:pointer;min-width:320px;box-shadow:0 1px 2px rgba(9,30,20,.05)}
+.rrw .rsw-trigger:hover{border-color:#98a099}
+.rrw .rsw-trigger.open{border-color:#1fa963;box-shadow:0 0 0 3px rgba(31,169,99,.2)}
+.rrw .rsw-dot{width:9px;height:9px;border-radius:50%;flex:none;display:inline-block}
+.rrw .rsw-dot.red{background:#d64545}.rrw .rsw-dot.amber{background:#b7791f}.rrw .rsw-dot.green{background:#1fa963}.rrw .rsw-dot.none{background:#c9cdca}
+.rrw .rsw-name{font-weight:700;font-size:14px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rrw .rsw-meta{font-size:12px;color:#6b756e;white-space:nowrap}
+.rrw .rsw-chev{color:#98a099;font-size:11px}
+.rrw .rsw-trigger.open .rsw-chev{transform:rotate(180deg)}
+.rrw .rsw-menu{position:absolute;top:calc(100% + 8px);left:0;width:430px;max-width:92vw;background:#fff;border:1px solid #e4e7e5;border-radius:12px;box-shadow:0 6px 24px rgba(9,30,20,.14);z-index:30;overflow:hidden;display:none}
+.rrw .rsw-menu.open{display:block}
+.rrw .rsw-search{padding:11px 12px;border-bottom:1px solid #eef1ef}
+.rrw .rsw-search input{width:100%;border:1px solid #e4e7e5;border-radius:8px;padding:8px 11px;font-size:13px;font-family:inherit;color:#1c2620}
+.rrw .rsw-search input:focus{outline:none;border-color:#1fa963;box-shadow:0 0 0 3px rgba(31,169,99,.18)}
+.rrw .rsw-seg{display:flex;gap:4px;padding:10px 12px 4px;flex-wrap:wrap}
+.rrw .rsw-seg button{border:1px solid #e4e7e5;background:#fff;color:#3a453e;font:inherit;font-size:12px;font-weight:600;padding:5px 12px;border-radius:999px;cursor:pointer}
+.rrw .rsw-seg button.on{background:#1fa963;border-color:#1fa963;color:#fff}
+.rrw .rsw-list{max-height:340px;overflow-y:auto;padding:6px}
+.rrw .rsw-grp{font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#98a099;padding:12px 10px 5px}
+.rrw .rsw-opt{display:grid;grid-template-columns:auto 1fr auto;gap:11px;align-items:center;padding:8px 10px;border-radius:8px;cursor:pointer}
+.rrw .rsw-opt:hover{background:#eef1ef}
+.rrw .rsw-opt.sel{background:#e9f6ef}
+.rrw .rsw-opt .nm{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rrw .rsw-opt .tg{font-size:10px;font-weight:700;color:#6b756e;border:1px solid #e4e7e5;border-radius:5px;padding:1px 5px;margin-left:7px;text-transform:uppercase}
+.rrw .rsw-opt .tg.bug{color:#d64545;border-color:rgba(214,69,69,.4)}
+.rrw .rsw-opt .wh{font-size:11.5px;color:#6b756e;text-align:right;white-space:nowrap}
+.rrw .rsw-opt .wh b{color:#1c2620}
+.rrw .rsw-legend{display:flex;gap:14px;font-size:11px;color:#6b756e;padding:9px 14px;border-top:1px solid #eef1ef}
+.rrw .rsw-legend span{display:inline-flex;align-items:center;gap:5px}
+.rrw .rsw-empty{padding:16px;text-align:center;color:#6b756e;font-size:12.5px}
 .rrw .verdict{display:grid;grid-template-columns:auto 1fr auto;gap:22px;align-items:center;background:#fff;border:1px solid #e4e7e5;border-left:5px solid #b7791f;border-radius:12px;padding:18px 22px;box-shadow:0 1px 2px rgba(9,30,20,.05);margin-bottom:18px}
 .rrw .verdict.go{border-left-color:#1fa963}.rrw .verdict.risk{border-left-color:#b7791f}.rrw .verdict.no{border-left-color:#d64545}
 .rrw .badge{font-size:19px;font-weight:800;padding:6px 14px;border-radius:8px;display:inline-block}
@@ -314,10 +344,67 @@ REL = """
 <div class="eyebrow">Release Readiness</div>
 {% if not d %}<h1 class="rt">Pick a release</h1>
 <div class="rsub">Choose a fix version to see how ready it is to ship.</div>{% endif %}
-<div class="vers">
-{% for v in versions %}<a href="/release?version={{ v.name|urlencode }}" class="vpill {{ 'active' if v.name==chosen else '' }}">{{ v.name }}{% if v.release_date %}<span class="rd">{{ v.release_date.strftime('%b %-d') }}</span>{% endif %}</a>{% endfor %}
-{% if not versions %}<span class="rr-muted">No unreleased fix versions found.</span>{% endif %}
+{% if not versions_data %}
+<div class="rsw"><span class="rr-muted">No unreleased fix versions found.</span></div>
+{% else %}
+<div class="rsw">
+  <span class="rsw-lbl">Release</span>
+  <div class="rsw-box">
+    <div class="rsw-trigger" id="rswTrigger" onclick="rswToggle()">
+      <span class="rsw-dot {{ selected.cls if selected else 'none' }}"></span>
+      <span class="rsw-name">{{ selected.name if selected else 'Choose a release' }}</span>
+      <span class="rsw-meta">{% if selected and selected.date_label %}ships {{ selected.date_label }}{% if selected.days is not none %} · {% if selected.days < 0 %}{{ -selected.days }}d overdue{% else %}{{ selected.days }} days{% endif %}{% endif %}{% endif %}</span>
+      <span class="rsw-chev">&#9660;</span>
+    </div>
+    <div class="rsw-menu" id="rswMenu">
+      <div class="rsw-search"><input id="rswSearch" placeholder="Search releases&hellip;" autocomplete="off" oninput="rswRender()"></div>
+      <div class="rsw-seg" id="rswSeg">
+        <button class="on" data-p="all" onclick="rswSetPlat('all',this)">All</button>
+        {% for p in platforms %}<button data-p="{{ p }}" onclick="rswSetPlat('{{ p }}',this)">{{ p }}</button>{% endfor %}
+      </div>
+      <div class="rsw-list" id="rswList"></div>
+      <div class="rsw-legend"><span><span class="rsw-dot red"></span>overdue</span><span><span class="rsw-dot amber"></span>&le; 7 days</span><span><span class="rsw-dot green"></span>on track</span></div>
+    </div>
+  </div>
 </div>
+<script>
+(function(){
+  var DATA={{ versions_data|tojson }}, CHOSEN={{ chosen|tojson }}, plat="all";
+  var order={Web:0,iOS:1,Android:2,Backend:3,Other:4};
+  var trigger=document.getElementById('rswTrigger'), menu=document.getElementById('rswMenu'),
+      list=document.getElementById('rswList'), search=document.getElementById('rswSearch');
+  if(!trigger) return;
+  function esc(s){return String(s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
+  function whenTxt(v){if(!v.date_label)return 'no date';if(v.days===null)return esc(v.date_label);
+    return esc(v.date_label)+' &middot; <b>'+(v.days<0?(-v.days)+'d overdue':v.days+'d')+'</b>';}
+  window.rswToggle=function(){var o=menu.classList.toggle('open');trigger.classList.toggle('open',o);if(o){search.focus();rswRender();}};
+  window.rswSetPlat=function(p,btn){plat=p;var seg=document.getElementById('rswSeg');
+    Array.prototype.forEach.call(seg.children,function(b){b.classList.toggle('on',b===btn);});rswRender();};
+  function close(){menu.classList.remove('open');trigger.classList.remove('open');}
+  window.rswRender=function(){
+    var q=(search.value||'').trim().toLowerCase();
+    var rows=DATA.filter(function(v){return (plat==='all'||v.platform===plat)&&(!q||v.name.toLowerCase().indexOf(q)>=0);});
+    rows.sort(function(a,b){var pa=order[a.platform]==null?9:order[a.platform],pb=order[b.platform]==null?9:order[b.platform];
+      if(pa!==pb)return pa-pb;var da=a.days==null?1e9:a.days,db=b.days==null?1e9:b.days;return da-db;});
+    list.innerHTML='';
+    if(!rows.length){list.innerHTML='<div class="rsw-empty">No releases match.</div>';return;}
+    var cur=null;
+    rows.forEach(function(v){
+      if(v.platform!==cur){cur=v.platform;var h=document.createElement('div');h.className='rsw-grp';h.textContent=v.platform;list.appendChild(h);}
+      var o=document.createElement('div');o.className='rsw-opt'+(v.name===CHOSEN?' sel':'');
+      o.onclick=function(){window.location='/release?version='+encodeURIComponent(v.name);};
+      o.innerHTML='<span class="rsw-dot '+v.cls+'"></span><span class="nm">'+esc(v.short||v.name)+
+        '<span class="tg'+(v.type==='Bug'?' bug':'')+'">'+esc(v.type)+'</span></span>'+
+        '<span class="wh">'+whenTxt(v)+'</span>';
+      list.appendChild(o);
+    });
+  };
+  document.addEventListener('keydown',function(e){if(e.key==='Escape')close();});
+  document.addEventListener('click',function(e){if(!e.target.closest('.rsw-box'))close();});
+  rswRender();
+})();
+</script>
+{% endif %}
 
 {% if d %}
 {% set vcls = {'GO':'go','AT RISK':'risk','NO-GO':'no'}[d.verdict] %}
@@ -420,22 +507,90 @@ REL = """
 """
 
 
+# Order platforms appear in the release switcher.
+_PLATFORM_ORDER = ["Web", "iOS", "Android", "Backend", "Other"]
+
+
+def _platform_of(name):
+    n = name.lower()
+    if re.search(r"\bios\b", n):
+        return "iOS"
+    if re.search(r"\bandroid\b", n):
+        return "Android"
+    if re.search(r"\bweb\b", n):
+        return "Web"
+    if re.search(r"\b(be|backend|back[\s-]?end)\b", n):
+        return "Backend"
+    return "Other"
+
+
+def _type_of(name):
+    n = name.lower()
+    if re.search(r"\b(bug|hotfix|patch)\b", n):
+        return "Bug"
+    if re.search(r"\bfeature\b", n):
+        return "Feature"
+    return "Release"
+
+
+def _short_name(name):
+    """Drop a leading platform word so the switcher rows aren't redundant with the
+    group header (e.g. 'Web Feature Release 0.12.0' -> 'Feature Release 0.12.0')."""
+    parts = name.split(" ", 1)
+    if len(parts) == 2 and re.fullmatch(r"(?i)ios|android|web|be|backend", parts[0]):
+        return parts[1]
+    return name
+
+
+def _version_meta(name, release_date, today):
+    days = (release_date - today).days if release_date else None
+    cls = "none" if days is None else ("red" if days < 0 else ("amber" if days <= 7 else "green"))
+    return {
+        "name": name,
+        "short": _short_name(name),
+        "platform": _platform_of(name),
+        "type": _type_of(name),
+        "date_label": release_date.strftime("%b %-d") if release_date else "",
+        "days": days,
+        "cls": cls,
+    }
+
+
 def release_context(chosen):
-    """Build the Release Readiness template context for the given fix version
-    (or just the version picker when chosen is None). Shared by the /release page."""
-    versions = []
+    """Build the Release Readiness template context. Produces the release-switcher
+    metadata (platform / type / date / urgency per version) and, when nothing is
+    chosen, defaults to the soonest upcoming release. Shared by the /release page."""
+    today = dt.date.today()
+    date_by_name, metas = {}, []
     for v in jc.fetch_project_versions():
         if v.get("released"):
             continue
-        versions.append({"name": v.get("name"),
-                         "release_date": R._parse_date(v.get("releaseDate"))})
-    versions.sort(key=lambda x: x["name"], reverse=True)
+        name = v.get("name")
+        rd = R._parse_date(v.get("releaseDate"))
+        date_by_name[name] = rd
+        metas.append(_version_meta(name, rd, today))
+
+    def sort_key(m):
+        pidx = _PLATFORM_ORDER.index(m["platform"]) if m["platform"] in _PLATFORM_ORDER else 99
+        return (pidx, m["days"] is None, m["days"] if m["days"] is not None else 0)
+    metas.sort(key=sort_key)
+    platforms = [p for p in _PLATFORM_ORDER if any(m["platform"] == p for m in metas)]
+
+    # Default to the soonest upcoming release (else the soonest dated one).
+    if not chosen and metas:
+        dated = [m for m in metas if m["days"] is not None]
+        upcoming = [m for m in dated if m["days"] >= 0]
+        pool = upcoming or dated or metas
+        chosen = min(pool, key=lambda m: m["days"] if m["days"] is not None else 10**9)["name"]
+
+    selected = next((m for m in metas if m["name"] == chosen), None)
     d, burnup_svg = None, ""
     if chosen:
-        rd = next((v["release_date"] for v in versions if v["name"] == chosen), None)
-        d = R.release_readiness(jc.fetch_issues_for_version(chosen), chosen, release_date=rd)
+        d = R.release_readiness(jc.fetch_issues_for_version(chosen), chosen,
+                                release_date=date_by_name.get(chosen))
         burnup_svg = _burnup_svg(d)
-    return {"versions": versions, "chosen": chosen, "d": d, "burnup_svg": burnup_svg}
+    return {"versions_data": metas, "platforms": platforms, "chosen": chosen,
+            "selected": selected, "d": d, "burnup_svg": burnup_svg}
 
 
 @bp.route("/reports/release")
