@@ -246,7 +246,7 @@ REL = """
 <style>
 .rrw{max-width:1120px;margin:0 auto}
 .rrw .eyebrow{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#6b756e}
-.rrw h1.rt{font-size:22px;font-weight:800;margin:2px 0 3px;letter-spacing:-.4px}
+.rrw h1.rt{font-size:24px;font-weight:800;margin:2px 0 4px;letter-spacing:-.4px}
 .rrw .rsub{color:#6b756e;font-size:13.5px;margin:0 0 16px}
 .rrw .rsw{display:flex;align-items:center;gap:12px;margin:14px 0 20px;flex-wrap:wrap}
 .rrw .rsw-lbl{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6b756e}
