@@ -45,6 +45,7 @@ class Issue:
     fix_versions: list
     timeline: A.Timeline
     events: list  # (ts, author, from_status, to_status)
+    duedate: dt.date | None = None
 
     @property
     def url(self):
@@ -61,6 +62,10 @@ class Issue:
     @property
     def is_bug(self):
         return self.type.lower() == "bug"
+
+    @property
+    def has_release(self):
+        return bool(self.fix_versions)
 
 
 def load_issues(raw_list) -> list[Issue]:
@@ -85,8 +90,19 @@ def load_issues(raw_list) -> list[Issue]:
             fix_versions=[v.get("name") for v in (f.get("fixVersions") or [])],
             timeline=tl,
             events=A.status_events(cl),
+            duedate=_parse_date(f.get("duedate")),
         ))
     return issues
+
+
+def _parse_date(s):
+    """Jira due dates are plain 'YYYY-MM-DD' strings."""
+    if not s:
+        return None
+    try:
+        return dt.date.fromisoformat(str(s)[:10])
+    except ValueError:
+        return None
 
 
 def _avg(vals):
@@ -345,26 +361,213 @@ def status_duration(issues, window=None, exclude_stuck_days=None):
 # Report 7 — Release Readiness
 # ---------------------------------------------------------------------------
 
-def release_readiness(version_issues, version_name):
-    issues = load_issues(version_issues) if version_issues and isinstance(version_issues[0], dict) else version_issues
+# Linear pipeline stages (excludes the Paused and Reopened overlays), earliest->latest.
+_LINEAR_STAGES = [
+    cfg.STAGE_TODO, cfg.STAGE_IN_PROGRESS, cfg.STAGE_DEVELOPMENT,
+    cfg.STAGE_READY_FOR_QA, cfg.STAGE_QA_TESTING, cfg.STAGE_STAGING,
+    cfg.STAGE_PROD_READY, cfg.STAGE_PRODUCTION, cfg.STAGE_DONE,
+]
+_LIN_IDX = {s: i for i, s in enumerate(_LINEAR_STAGES)}
+
+# Each pipeline milestone and the linear stage a ticket must reach to count for it.
+_MILESTONES = [
+    ("dev_completed",  "Development completed", cfg.STAGE_READY_FOR_QA),
+    ("passed_qa",      "Passed QA",             cfg.STAGE_STAGING),
+    ("passed_staging", "Passed staging",        cfg.STAGE_PROD_READY),
+    ("in_production",  "Live in production",    cfg.STAGE_PRODUCTION),
+    ("done",           "Done",                  cfg.STAGE_DONE),
+]
+
+# Gate thresholds for the release verdict (tune here).
+RR_GATES = {
+    "high_bugs_max": 2,
+    "bounce_rate_max": 0.15,
+    "not_started_max": 8,
+    "throughput_window_days": 21,
+}
+
+
+def _furthest_index(issue):
+    """Highest linear-stage index the ticket has ever reached (from the changelog),
+    so a paused/blocked ticket still counts at the furthest milestone it passed."""
+    idxs = [_LIN_IDX[s] for s in issue.timeline.stage_first_entry if s in _LIN_IDX]
+    if issue.stage in _LIN_IDX:
+        idxs.append(_LIN_IDX[issue.stage])
+    return max(idxs) if idxs else 0
+
+
+def _age_in_status(issue):
+    d = issue.timeline.days_in_status(issue.status)
+    return round(d) if d is not None else None
+
+
+def release_readiness(version_issues, version_name, release_date=None, now=None):
+    """Release readiness for one fix version: a pipeline funnel (how far the batch
+    has progressed), throughput-based projection, coverage gaps, and an auditable
+    set of ship gates that roll up to a GO / AT RISK / NO-GO verdict.
+
+    release_date: the version's Jira releaseDate (a date), or None.
+    """
+    issues = (load_issues(version_issues)
+              if version_issues and isinstance(version_issues[0], dict) else version_issues)
+    now = now or A.now_utc()
+    today = now.date()
     total = len(issues)
-    done = sum(1 for i in issues if not i.is_open)
+    pct = lambda n: round(100 * n / total) if total else 0
+
+    # --- Pipeline funnel: cumulative "reached this milestone or beyond" ---
+    counts = {mid: 0 for mid, _l, _s in _MILESTONES}
+    for i in issues:
+        fi = _furthest_index(i)
+        for mid, _l, stg in _MILESTONES:
+            if fi >= _LIN_IDX[stg]:
+                counts[mid] += 1
+    funnel = [{"id": mid, "label": lbl, "count": counts[mid], "pct": pct(counts[mid])}
+              for mid, lbl, _s in _MILESTONES]
+    dev_done = counts["dev_completed"]
+
+    # --- Bugs / blockers ---
     open_bugs = [i for i in issues if i.is_bug and i.is_open]
-    crit = sum(1 for i in open_bugs if i.priority.lower() in ("highest", "critical"))
-    high = sum(1 for i in open_bugs if i.priority.lower() == "high")
-    pending_qa = [i for i in issues if i.stage in (cfg.STAGE_READY_FOR_QA, cfg.STAGE_QA_TESTING)]
-    pending_stories = [i for i in issues if i.is_open and not i.is_bug]
-    blocked = [i for i in issues if i.stage in cfg.BLOCKED_STAGES]
-    w = cfg.RISK_WEIGHTS
-    risk = (crit * w["critical_bug"] + high * w["high_bug"]
-            + len(pending_stories) * w["pending_story"] + len(blocked) * w["blocked"])
+    crit = [i for i in open_bugs if i.priority.lower() in ("highest", "critical")]
+    high = [i for i in open_bugs if i.priority.lower() == "high"]
+    blocked = [i for i in issues if i.is_open and i.stage in cfg.BLOCKED_STAGES]
+
+    # --- Coverage gaps (open tickets only) ---
+    open_issues = [i for i in issues if i.is_open]
+    missing_due = [i for i in open_issues if i.duedate is None]
+    no_release = [i for i in open_issues if not i.has_release]
+    not_started = [i for i in open_issues if i.stage == cfg.STAGE_TODO]
+    unassigned = [i for i in open_issues if i.assignee == "Unassigned"]
+
+    # --- Ownership: open tickets per assignee ---
+    own = {}
+    for i in open_issues:
+        own[i.assignee] = own.get(i.assignee, 0) + 1
+    ownership = sorted(({"name": k, "count": v} for k, v in own.items()),
+                       key=lambda r: -r["count"])[:8]
+
+    # --- Throughput (dev-completions/week over the window) & projection ---
+    win = now - dt.timedelta(days=RR_GATES["throughput_window_days"])
+    dev_completions = sum(
+        1 for i in issues
+        if (ts := i.timeline.stage_first_entry.get(cfg.STAGE_READY_FOR_QA)) and ts >= win)
+    weeks = RR_GATES["throughput_window_days"] / 7.0
+    throughput = dev_completions / weeks
+    remaining_dev = total - dev_done
+    proj_date = None
+    if remaining_dev <= 0:
+        proj_date = today
+    elif throughput > 0:
+        proj_date = today + dt.timedelta(days=round(remaining_dev / throughput * 7))
+    proj_delta = (proj_date - release_date).days if (proj_date and release_date) else None
+
+    # --- QA bounce rate ---
+    reached_qa = sum(
+        1 for i in issues
+        if any(s in i.timeline.stage_first_entry
+               for s in (cfg.STAGE_READY_FOR_QA, cfg.STAGE_QA_TESTING)))
+    qa_stages = {cfg.STAGE_READY_FOR_QA, cfg.STAGE_QA_TESTING, cfg.STAGE_STAGING}
+    back = {cfg.STAGE_IN_PROGRESS, cfg.STAGE_DEVELOPMENT, cfg.STAGE_REOPENED}
+    bounced = sum(
+        1 for i in issues
+        if any(frm in qa_stages and to in back for _ts, frm, to in i.timeline.transitions))
+    bounce_rate = (bounced / reached_qa) if reached_qa else 0.0
+
+    days_to_target = (release_date - today).days if release_date else None
+
+    # --- Ship gates -> verdict ---
+    def g(name, sub, measure, value, status, level="warn"):
+        return {"name": name, "sub": sub, "measure": measure,
+                "value": value, "status": status, "level": level}
+
+    gates = [
+        g("Open critical bugs", "Priority Highest/Critical, still open",
+          "must be 0 to ship", len(crit), "bad" if crit else "ok", level="block"),
+        g("Open high bugs", "Priority High, still open",
+          f"≤ {RR_GATES['high_bugs_max']}", len(high),
+          "warn" if len(high) > RR_GATES["high_bugs_max"] else "ok"),
+        g("Blocked tickets", "Blocked / Customer Feedback / Cannot Reproduce / paused",
+          "0", len(blocked), "warn" if blocked else "ok"),
+        g("QA bounce rate", "Returned from QA ÷ reached QA",
+          f"< {round(RR_GATES['bounce_rate_max']*100)}%", f"{round(bounce_rate*100)}%",
+          "warn" if bounce_rate >= RR_GATES["bounce_rate_max"] else "ok"),
+    ]
+    if proj_delta is not None:
+        gates.append(g("Schedule confidence", "Projected dev-complete vs. target date",
+                       "on/before target",
+                       f"{'+' if proj_delta > 0 else ''}{proj_delta}d",
+                       "warn" if proj_delta > 0 else "ok"))
+    gates.append(g("Not started", "Tickets still in To Do",
+                   f"≤ {RR_GATES['not_started_max']}", len(not_started),
+                   "warn" if len(not_started) > RR_GATES["not_started_max"] else "ok"))
+    gates.append(g("Due date & release set",
+                   "Team policy: every open ticket needs both until resolved/done",
+                   "0 missing", len(missing_due) + len(no_release),
+                   "bad" if (missing_due or no_release) else "ok"))
+
+    if any(x["status"] == "bad" and x["level"] == "block" for x in gates):
+        verdict = "NO-GO"
+    elif any(x["status"] in ("bad", "warn") for x in gates):
+        verdict = "AT RISK"
+    else:
+        verdict = "GO"
+
+    # --- Verdict reasons (banner) ---
+    reasons = []
+    if crit:
+        reasons.append(("bad", f"{len(crit)} open critical bug"
+                        f"{'s' if len(crit) != 1 else ''} — must be 0 before release"))
+    if proj_delta is not None and proj_delta > 0:
+        reasons.append(("warn", f"Projected dev-complete {proj_date:%b %-d}, "
+                        f"{proj_delta} day{'s' if proj_delta != 1 else ''} past the target"))
+    if missing_due or no_release:
+        n = len(missing_due) + len(no_release)
+        reasons.append(("bad", f"{n} open ticket{'s' if n != 1 else ''} "
+                        "missing a due date or release"))
+    if blocked:
+        reasons.append(("warn", f"{len(blocked)} blocked ticket"
+                        f"{'s' if len(blocked) != 1 else ''}"))
+    if len(high) > RR_GATES["high_bugs_max"]:
+        reasons.append(("warn", f"{len(high)} open high-priority bugs"))
+    if not reasons:
+        reasons.append(("ok", "All ship gates pass — clear to release"))
+
+    # --- Development burn-up: weekly cumulative tickets reaching dev-complete ---
+    burnup = []
+    for w in range(8, -1, -1):
+        wk_end = now - dt.timedelta(days=7 * w)
+        c = sum(1 for i in issues
+                if (ts := i.timeline.stage_first_entry.get(cfg.STAGE_READY_FOR_QA)) and ts <= wk_end)
+        burnup.append({"days_ago": 7 * w, "count": c})
+
+    # --- Must-clear list: open criticals/highs + blocked, oldest first ---
+    def _row(i, tag, cls):
+        return {"key": i.key, "url": i.url, "summary": i.summary,
+                "tag": tag, "cls": cls, "age": _age_in_status(i)}
+    must_clear = ([_row(i, "Critical", "bad") for i in crit]
+                  + [_row(i, "High", "warn") for i in high]
+                  + [_row(i, "Blocked", "") for i in blocked])
+    must_clear.sort(key=lambda r: -(r["age"] or 0))
+
     return {
-        "version": version_name, "total": total, "done": done,
-        "completion_pct": round(100 * done / total) if total else 0,
-        "open_critical": crit, "open_high": high,
-        "pending_qa": len(pending_qa), "pending_stories": len(pending_stories),
-        "blocked": len(blocked), "risk_score": risk,
-        "open_bugs_list": open_bugs, "pending_qa_list": pending_qa,
+        "version": version_name, "release_date": release_date,
+        "days_to_target": days_to_target, "total": total, "verdict": verdict,
+        "reasons": reasons[:3], "funnel": funnel,
+        "dev_completed": dev_done, "dev_completed_pct": pct(dev_done),
+        "passed_staging": counts["passed_staging"], "passed_staging_pct": pct(counts["passed_staging"]),
+        "throughput": round(throughput, 1), "remaining_dev": remaining_dev,
+        "proj_date": proj_date, "proj_delta": proj_delta,
+        "proj_days": (proj_date - today).days if proj_date else None,
+        "open_critical": len(crit), "open_high": len(high), "blocked": len(blocked),
+        "bounce_rate": round(bounce_rate * 100),
+        "not_started": len(not_started), "missing_due": len(missing_due),
+        "no_release": len(no_release), "unassigned": len(unassigned),
+        "gates": gates, "ownership": ownership, "must_clear": must_clear[:12],
+        "burnup": burnup,
+        # legacy keys kept so older callers/tests keep working
+        "done": counts["done"], "completion_pct": pct(counts["done"]),
+        "risk_score": len(crit) * 10 + len(high) * 5 + len(blocked) * 3,
+        "open_bugs_list": open_bugs,
     }
 
 

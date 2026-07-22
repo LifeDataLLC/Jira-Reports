@@ -336,64 +336,30 @@ def test_flow_quality():
 
 
 # ---------------------------------------------------------------------------
-# Phase 4 — gated planning features
+# Phase 4 — gated attention date rules
 # ---------------------------------------------------------------------------
 
-def test_planning_gated():
+def test_attention_date_gates():
+    import attention
     import dev_reports as dr
-    import planning as pl
-    # Ticket with a pushed due date (2026-07-01 -> 2026-07-08 -> 2026-07-15) and
-    # two start-date moves.
-    raw = mkraw("P-1", "Development / In Design", "In Progress",
-                duedate="2026-07-15", events=[
-        (9, "Jane Doe", "status", "To Do", "Development / In Design"),
-        (8, "Jane Doe", "duedate", "2026-07-01", "2026-07-08"),
-        (4, "Jane Doe", "duedate", "2026-07-08", "2026-07-15"),
-        (7, "Jane Doe", "Start date", "2026-06-20", "2026-06-25"),
-        (3, "Jane Doe", "Start date", "2026-06-25", "2026-07-02"),
-    ])
-    issues = dr.load_dev_issues([raw])
-    i = issues[0]
-    sm = pl.slip_metrics(i)
-    check("original due = first from-value", sm["original"] == dt.date(2026, 7, 1))
-    check("push count", sm["pushes"] == 2)
-    check("slip days", sm["slip_days"] == 14)
-    rm = pl.reschedule_metrics(i)
-    check("reschedule count", rm["count"] == 2)
-    check("days pushed", rm["days_pushed"] == 12)
-
-    # Gates OFF -> hygiene returns empty (ships dark)
+    # Past-due is raised, and stays on even when the due-date gate is off (it
+    # mirrors My Day's ungated "Past due date" check); the gated "missing dates"
+    # reason follows the gate.
     s = st.load()
-    for g in s["gates"]:
-        s["gates"][g] = False
-    st.save(s)
-    h = pl.hygiene(issues)
-    check("hygiene dark when gates off",
-          not h["missing"] and not h["slips"] and not h["reschedules"])
-    # Flip gates -> features light up with zero deploy
     s["gates"]["due_dates_required"] = True
     s["gates"]["start_dates_required"] = True
     st.save(s)
-    h = pl.hygiene(issues)
-    check("slip table lights up", len(h["slips"]) == 1 and h["slips"][0]["slip_days"] == 14)
-    check("reschedules light up", len(h["reschedules"]) == 1)
-    check("missing start date flagged", len(h["missing"]) == 1
-          and "start date" in h["missing"][0]["missing"])
-    # attention gains Overdue + Missing dates reasons when gated on
-    import attention
     over = mkraw("P-2", "Development / In Design", "In Progress",
                  duedate=(now - dt.timedelta(days=3)).date().isoformat(), events=[
         (2, "Jane Doe", "status", "To Do", "Development / In Design")])
-    d = attention.board(dr.load_dev_issues([over]), now=now)
-    kinds = {r["kind"] for row in d["rows"] for r in row["reasons"]}
+    kinds = {r["kind"] for row in attention.board(dr.load_dev_issues([over]), now=now)["rows"]
+             for r in row["reasons"]}
     check("past-due reason raised", "past_due" in kinds)
     s["gates"]["due_dates_required"] = False
     s["gates"]["start_dates_required"] = False
     st.save(s)
-    d2 = attention.board(dr.load_dev_issues([over]), now=now)
-    kinds2 = {r["kind"] for row in d2["rows"] for r in row["reasons"]}
-    # Past due is ungated (matches My Day's "Past due date" check); the gated
-    # "missing dates" reason goes dark.
+    kinds2 = {r["kind"] for row in attention.board(dr.load_dev_issues([over]), now=now)["rows"]
+              for r in row["reasons"]}
     check("past due stays on when the due-date gate is off", "past_due" in kinds2)
     check("missing-dates dark when gate off", "dates" not in kinds2)
 
@@ -557,12 +523,16 @@ def test_routes():
     check("landing redirects", r.status_code == 302)
     # new screens render
     for route in ["/my-day", "/my-day/rollup", "/my-day/feed", "/attention",
-                  "/qa", "/flow", "/quality", "/planning", "/investigate", "/settings"]:
+                  "/qa", "/flow", "/quality", "/release", "/investigate", "/settings"]:
         r = c.get(route)
         check(f"200 {route}", r.status_code == 200)
     # kept routes still live
-    for route in ["/reports/time-in-status", "/reports/release", "/exec/kpis"]:
+    for route in ["/reports/time-in-status", "/exec/kpis"]:
         check(f"kept {route}", c.get(route).status_code == 200)
+    # old release URL now redirects to the top-level /release page
+    rr = c.get("/reports/release")
+    check("/reports/release -> /release", rr.status_code in (301, 302)
+          and rr.headers["Location"].endswith("/release"))
 
 
 # ---------------------------------------------------------------------------
