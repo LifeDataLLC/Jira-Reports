@@ -70,7 +70,7 @@ def _issues_in_range(project, start, end):
 
 NAV = [
     ("/my-day", "My Day"), ("/attention", "Attention"), ("/qa", "QA"),
-    ("/flow", "Flow"), ("/quality", "Quality"), ("/planning", "Planning"),
+    ("/flow", "Flow"), ("/quality", "Quality"), ("/release", "Release"),
     ("/investigate", "Investigate"), ("/exec", "Trends"), ("/settings", "Settings"),
 ]
 
@@ -904,7 +904,7 @@ PLANNING_TMPL = """
   create scrum boards in Jira, start real sprints, then enter the board IDs in
   <a href="/settings">Settings</a> and turn on the <i>Sprints enabled</i> gate.
   Until then, Release Readiness (fixVersion-based) is the commitment view:</p>
-  <a class="btn" href="/reports/release">Release Readiness →</a>
+  <a class="btn" href="/release">Release Readiness →</a>
   {% endif %}
 </div>
 
@@ -950,6 +950,14 @@ reschedule counts. The Jira-side prerequisites are documented in <code>docs/jira
 {% endif %}
 {% endif %}
 """
+
+
+@v3.route("/release")
+def release_screen():
+    """Release Readiness as a top-level screen (replaces Planning in the nav)."""
+    import reports_web as rw
+    ctx = rw.release_context(request.args.get("version"))
+    return page(rw.REL, active="/release", fmt=rw.fmt, **ctx)
 
 
 @v3.route("/planning")

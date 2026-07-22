@@ -557,12 +557,16 @@ def test_routes():
     check("landing redirects", r.status_code == 302)
     # new screens render
     for route in ["/my-day", "/my-day/rollup", "/my-day/feed", "/attention",
-                  "/qa", "/flow", "/quality", "/planning", "/investigate", "/settings"]:
+                  "/qa", "/flow", "/quality", "/release", "/planning", "/investigate", "/settings"]:
         r = c.get(route)
         check(f"200 {route}", r.status_code == 200)
     # kept routes still live
-    for route in ["/reports/time-in-status", "/reports/release", "/exec/kpis"]:
+    for route in ["/reports/time-in-status", "/exec/kpis"]:
         check(f"kept {route}", c.get(route).status_code == 200)
+    # old release URL now redirects to the top-level /release page
+    rr = c.get("/reports/release")
+    check("/reports/release -> /release", rr.status_code in (301, 302)
+          and rr.headers["Location"].endswith("/release"))
 
 
 # ---------------------------------------------------------------------------

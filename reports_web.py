@@ -14,7 +14,9 @@ import csv
 import datetime as dt
 import io
 
-from flask import Blueprint, Response, jsonify, render_template_string, request
+from urllib.parse import quote
+
+from flask import Blueprint, Response, jsonify, redirect, render_template_string, request
 
 import config as cfg
 import jira_client as jc
@@ -124,7 +126,7 @@ TOP = """
  <a href="/qa">QA</a>
  <a href="/flow">Flow</a>
  <a href="/quality">Quality</a>
- <a href="/planning">Planning</a>
+ <a href="/release">Release</a>
  <a href="/investigate">Investigate</a>
  <a href="/exec">Trends</a>
  <a href="/settings">Settings</a>
@@ -313,7 +315,7 @@ REL = """
 {% if not d %}<h1 class="rt">Pick a release</h1>
 <div class="rsub">Choose a fix version to see how ready it is to ship.</div>{% endif %}
 <div class="vers">
-{% for v in versions %}<a href="/reports/release?version={{ v.name|urlencode }}" class="vpill {{ 'active' if v.name==chosen else '' }}">{{ v.name }}{% if v.release_date %}<span class="rd">{{ v.release_date.strftime('%b %-d') }}</span>{% endif %}</a>{% endfor %}
+{% for v in versions %}<a href="/release?version={{ v.name|urlencode }}" class="vpill {{ 'active' if v.name==chosen else '' }}">{{ v.name }}{% if v.release_date %}<span class="rd">{{ v.release_date.strftime('%b %-d') }}</span>{% endif %}</a>{% endfor %}
 {% if not versions %}<span class="rr-muted">No unreleased fix versions found.</span>{% endif %}
 </div>
 
@@ -418,23 +420,30 @@ REL = """
 """
 
 
-@bp.route("/reports/release")
-def release():
-    raw_versions = jc.fetch_project_versions()
+def release_context(chosen):
+    """Build the Release Readiness template context for the given fix version
+    (or just the version picker when chosen is None). Shared by the /release page."""
     versions = []
-    for v in raw_versions:
+    for v in jc.fetch_project_versions():
         if v.get("released"):
             continue
         versions.append({"name": v.get("name"),
                          "release_date": R._parse_date(v.get("releaseDate"))})
     versions.sort(key=lambda x: x["name"], reverse=True)
-    chosen = request.args.get("version")
     d, burnup_svg = None, ""
     if chosen:
         rd = next((v["release_date"] for v in versions if v["name"] == chosen), None)
         d = R.release_readiness(jc.fetch_issues_for_version(chosen), chosen, release_date=rd)
         burnup_svg = _burnup_svg(d)
-    return page(REL, versions=versions, chosen=chosen, d=d, burnup_svg=burnup_svg)
+    return {"versions": versions, "chosen": chosen, "d": d, "burnup_svg": burnup_svg}
+
+
+@bp.route("/reports/release")
+def release():
+    # Release Readiness now lives at /release (a top-level nav page). Keep the old
+    # URL working by redirecting, preserving the selected version.
+    chosen = request.args.get("version")
+    return redirect("/release" + (("?version=" + quote(chosen)) if chosen else ""), code=302)
 
 
 # ---------------------------------------------------------------------------
