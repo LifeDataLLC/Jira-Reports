@@ -27,12 +27,15 @@ STAGE_PAUSED = "Paused/Blocked"
 STAGE_READY_FOR_QA = "Ready for QA"
 STAGE_QA_TESTING = "QA Testing"
 STAGE_STAGING = "Staging/Verification"
+STAGE_PROD_READY = "Prod Ready"        # passed staging, awaiting the production release
+STAGE_PRODUCTION = "Production"         # deployed; production-testing/verification phase
 STAGE_DONE = "Done"
 STAGE_REOPENED = "Reopened"
 
 STAGE_ORDER = [
     STAGE_TODO, STAGE_IN_PROGRESS, STAGE_DEVELOPMENT, STAGE_PAUSED,
-    STAGE_READY_FOR_QA, STAGE_QA_TESTING, STAGE_STAGING, STAGE_DONE, STAGE_REOPENED,
+    STAGE_READY_FOR_QA, STAGE_QA_TESTING, STAGE_STAGING, STAGE_PROD_READY,
+    STAGE_PRODUCTION, STAGE_DONE, STAGE_REOPENED,
 ]
 
 # Stable color per stage, used by the stage-journey bar and legends.
@@ -44,39 +47,71 @@ STAGE_COLORS = {
     STAGE_READY_FOR_QA: "#00b8d9",  # teal
     STAGE_QA_TESTING: "#ffab00",    # amber
     STAGE_STAGING: "#6554c0",       # purple
+    STAGE_PROD_READY: "#57d9a3",    # mint (passed staging, prod-ready)
+    STAGE_PRODUCTION: "#00875a",    # deep green (in production / prod-testing)
     STAGE_DONE: "#36b37e",          # green
     STAGE_REOPENED: "#de350b",      # red
 }
 
 # ---------------------------------------------------------------------------
 # Real LifeData status name -> logical stage.
-# Derived from the LIFEDATAV2 workflow seen in the changelog. Add new statuses here.
+# Covers all LIFEDATAV2 workflow statuses (pulled from the project's status list).
+# NOTE: Jira's own statusCategory is unreliable here — e.g. "Development Completed"
+# and "In Production" report misleading categories — so every status is mapped
+# explicitly rather than trusting the category. Add new statuses here.
 # ---------------------------------------------------------------------------
 DEFAULT_STATUS_STAGE = {
+    # --- Not started ---
     "To Do": STAGE_TODO,
-    "Backlog": STAGE_TODO,
-    "Selected for Development": STAGE_TODO,
+    "Backlog": STAGE_TODO,                       # legacy / safety
+    "Selected for Development": STAGE_TODO,      # legacy / safety
 
+    # --- Investigation ---
     "In Progress / Start Investigation": STAGE_IN_PROGRESS,
-    "In Progress": STAGE_IN_PROGRESS,
+    "In Progress": STAGE_IN_PROGRESS,            # legacy / safety
     "Pause Investigation": STAGE_PAUSED,
 
+    # --- Development (incl. product's design review of dev output) ---
     "Development / In Design": STAGE_DEVELOPMENT,
+    "Ready for Design Review": STAGE_DEVELOPMENT,
+    "Review/Testing": STAGE_DEVELOPMENT,
+    "Resume Development": STAGE_DEVELOPMENT,
     "Pause Development / Design": STAGE_PAUSED,
 
+    # --- Development completed / ready for QA ---
+    "Development Completed": STAGE_READY_FOR_QA,  # NOT done: dev finished, headed to QA
     "Ready for QA (QA Env)": STAGE_READY_FOR_QA,
 
+    # --- QA ---
     "In QA Testing (QA Env)": STAGE_QA_TESTING,
+    "Pause QA Testing": STAGE_PAUSED,
 
+    # --- Passed QA / staging ---
     "Passed QA (Staging Ready)": STAGE_STAGING,
     "Ready for Staging Verification": STAGE_STAGING,
     "In Staging Testing": STAGE_STAGING,
+    "Pause Staging Testing": STAGE_PAUSED,
 
-    "Development Completed": STAGE_DONE,
+    # --- Passed staging, ready for the production release ---
+    "Passed Staging (Prod Ready)": STAGE_PROD_READY,
+
+    # --- Live in production (production-testing / verification phase) ---
+    "In Production": STAGE_PRODUCTION,
+    "In Production Testing": STAGE_PRODUCTION,
+    "Verification in Production": STAGE_PRODUCTION,
+    "Pause Production Testing": STAGE_PAUSED,
+
+    # --- Done (verified & closed) ---
+    "Resolved": STAGE_DONE,
+    "Resolved in Production": STAGE_DONE,
     "Close": STAGE_DONE,
     "Done": STAGE_DONE,
 
+    # --- Overlays (not part of the linear flow) ---
     "Reopen": STAGE_REOPENED,
+    "Blocked": STAGE_PAUSED,
+    "Customer Feedback": STAGE_PAUSED,           # waiting on customer -> treat as blocked
+    "Cannot Reproduce": STAGE_PAUSED,            # treat as blocked for now
 }
 
 # Stages that count as "actively being worked" (for cycle time = first active -> done)

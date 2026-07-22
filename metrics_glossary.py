@@ -31,10 +31,10 @@ GLOSSARY = {
              "is taking longer than it should, regardless of any due date.",
     "past_due": "The ticket's due date has passed. About the committed date, not how long it has "
                 "sat in a status (that's 'aging').",
-    "no_release": "The ticket isn't assigned to a release (fixVersion). Checked once work is "
-                  "underway — development, rework, or the QA pipeline.",
-    "missing_dates": "A ticket in development or rework without the dates the team requires "
-                     "(start and/or due), so it can't be planned against.",
+    "no_release": "The ticket isn't assigned to a release (fixVersion). Required for every open "
+                  "ticket until it's resolved/done.",
+    "missing_dates": "An open ticket missing a date the team requires — a due date (any open "
+                     "ticket) or a start date (in development or rework) — so it can't be planned against.",
     "handoff": "Any transition entering the QA stage, credited to whoever performed it "
                "(the changelog author), not the current assignee.",
     "handoff_check": "Binary Pass / Needs info: a comment by the handoff author within the "
