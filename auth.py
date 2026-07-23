@@ -164,6 +164,25 @@ def set_password(email, new_password, must_change=False) -> dict:
     return u
 
 
+def set_developer(email, developer=None, developer_id=None) -> dict:
+    """Admin action: re-link an account to a different developer (or clear it with
+    both args blank). Raises AuthError if the account is missing or that developer
+    is already linked to another account."""
+    email = (email or "").strip().lower()
+    data = _load()
+    u = data["users"].get(email)
+    if not u:
+        raise AuthError("Account not found.")
+    if developer_id or developer:
+        claimed = developer_claimed_by(developer_id, developer, exclude_email=email)
+        if claimed:
+            raise AuthError(f"That developer is already linked to another account ({claimed}).")
+    u["developer"] = developer or None
+    u["developer_id"] = developer_id or None
+    _save(data)
+    return u
+
+
 def generate_temp_password() -> str:
     """A random, shareable temporary password (admin resets / created accounts)."""
     return secrets.token_urlsafe(9)
