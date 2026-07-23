@@ -401,7 +401,8 @@ def _age_in_status(issue):
     return round(d) if d is not None else None
 
 
-def release_readiness(version_issues, version_name, release_date=None, now=None):
+def release_readiness(version_issues, version_name, release_date=None, now=None,
+                      window_days=14, capacity_per_week=0):
     """Release readiness for one fix version: a pipeline funnel (how far the batch
     has progressed), throughput-based projection, coverage gaps, and an auditable
     set of ship gates that roll up to a GO / AT RISK / NO-GO verdict.
@@ -430,7 +431,10 @@ def release_readiness(version_issues, version_name, release_date=None, now=None)
     open_bugs = [i for i in issues if i.is_bug and i.is_open]
     crit = [i for i in open_bugs if i.priority.lower() in ("highest", "critical")]
     high = [i for i in open_bugs if i.priority.lower() == "high"]
-    blocked = [i for i in issues if i.is_open and i.stage in cfg.BLOCKED_STAGES]
+    # Genuinely blocked vs. just paused for the day — both sit in the paused stage.
+    blocked = [i for i in issues if i.is_open and i.status in cfg.BLOCKED_STATUSES]
+    paused = [i for i in issues if i.is_open and i.stage in cfg.BLOCKED_STAGES
+              and i.status not in cfg.BLOCKED_STATUSES]
 
     # --- Coverage gaps (open tickets only) ---
     open_issues = [i for i in issues if i.is_open]
@@ -438,6 +442,10 @@ def release_readiness(version_issues, version_name, release_date=None, now=None)
     no_release = [i for i in open_issues if not i.has_release]
     not_started = [i for i in open_issues if i.stage == cfg.STAGE_TODO]
     unassigned = [i for i in open_issues if i.assignee == "Unassigned"]
+    # Within a fix version every ticket already carries this release, so the gate is
+    # about due dates only.
+    dr_tickets = [{"key": i.key, "url": i.url, "summary": i.summary, "note": ""}
+                  for i in missing_due]
 
     # --- Ownership: open tickets per assignee ---
     own = {}
@@ -468,42 +476,97 @@ def release_readiness(version_issues, version_name, release_date=None, now=None)
                for s in (cfg.STAGE_READY_FOR_QA, cfg.STAGE_QA_TESTING)))
     qa_stages = {cfg.STAGE_READY_FOR_QA, cfg.STAGE_QA_TESTING, cfg.STAGE_STAGING}
     back = {cfg.STAGE_IN_PROGRESS, cfg.STAGE_DEVELOPMENT, cfg.STAGE_REOPENED}
-    bounced = sum(
-        1 for i in issues
-        if any(frm in qa_stages and to in back for _ts, frm, to in i.timeline.transitions))
+    bounced_list = [i for i in issues
+                    if any(frm in qa_stages and to in back for _ts, frm, to in i.timeline.transitions)]
+    bounced = len(bounced_list)
     bounce_rate = (bounced / reached_qa) if reached_qa else 0.0
 
     days_to_target = (release_date - today).days if release_date else None
 
+    # --- Work-state + schedule (required pace vs. team capacity) ---
+    # Because the team works releases roughly one at a time, a future release may
+    # have ~0 recent throughput simply because it hasn't been started. So the
+    # schedule signal is NOT the per-release throughput projection (which would
+    # false-flag it as months late); it's whether the remaining work can still fit
+    # before the target at the team's normal pace: required pace vs. capacity.
+    cap = capacity_per_week or 0
+    started = sum(1 for i in issues if _furthest_index(i) > _LIN_IDX[cfg.STAGE_TODO])
+    if total and counts["done"] == total:
+        work_state = "complete"
+    elif started == 0:
+        work_state = "not_started"
+    else:
+        work_state = "in_progress"
+    # The per-release throughput only projects meaningfully once real, sustained
+    # work is under way — a ticket or two isn't representative of the eventual pace.
+    proj_representative = work_state == "in_progress" and dev_completions >= 2
+
+    weeks_left = (max(days_to_target, 0) / 7.0) if days_to_target is not None else None
+    required_pace = (remaining_dev / weeks_left
+                     if (remaining_dev > 0 and weeks_left and weeks_left > 0) else None)
+    schedule = {"state": work_state, "capacity": cap, "required_pace": required_pace,
+                "remaining": remaining_dev, "status": "ok", "note": ""}
+    if days_to_target is None:
+        schedule.update(status="na", note="no target date set")
+    elif remaining_dev <= 0:
+        schedule.update(status="ok", note="development complete")
+    elif not cap:
+        schedule.update(status="na", note="set an expected pace in Settings")
+    elif days_to_target <= 0:
+        schedule.update(status="warn", note="past the target with work remaining")
+    else:
+        schedule.update(status=("warn" if required_pace > cap else "ok"))
+
+    # Projected dev-complete date at the team's expected pace — this is what the
+    # burn-up's "at pace" trend line uses, so it responds to the capacity setting.
+    if remaining_dev <= 0:
+        cap_proj_days = 0
+    elif cap:
+        cap_proj_days = round(remaining_dev / cap * 7)
+    else:
+        cap_proj_days = None
+    cap_proj_date = (today + dt.timedelta(days=cap_proj_days)) if cap_proj_days is not None else None
+
     # --- Ship gates -> verdict ---
-    def g(name, sub, measure, value, status, level="warn"):
+    def _tk(i, note=""):
+        return {"key": i.key, "url": i.url, "summary": i.summary, "note": note}
+
+    def g(name, sub, measure, value, status, level="warn", tickets=None):
         return {"name": name, "sub": sub, "measure": measure,
-                "value": value, "status": status, "level": level}
+                "value": value, "status": status, "level": level,
+                "tickets": tickets or []}
 
     gates = [
         g("Open critical bugs", "Priority Highest/Critical, still open",
-          "must be 0 to ship", len(crit), "bad" if crit else "ok", level="block"),
+          "must be 0 to ship", len(crit), "bad" if crit else "ok", level="block",
+          tickets=[_tk(i) for i in crit]),
         g("Open high bugs", "Priority High, still open",
           f"≤ {RR_GATES['high_bugs_max']}", len(high),
-          "warn" if len(high) > RR_GATES["high_bugs_max"] else "ok"),
-        g("Blocked tickets", "Blocked / Customer Feedback / Cannot Reproduce / paused",
-          "0", len(blocked), "warn" if blocked else "ok"),
+          "warn" if len(high) > RR_GATES["high_bugs_max"] else "ok",
+          tickets=[_tk(i) for i in high]),
+        g("Blocked tickets", "Genuinely blocked (Blocked / Customer Feedback / Cannot Reproduce)",
+          "0", len(blocked), "warn" if blocked else "ok",
+          tickets=[_tk(i) for i in blocked]),
         g("QA bounce rate", "Returned from QA ÷ reached QA",
           f"< {round(RR_GATES['bounce_rate_max']*100)}%", f"{round(bounce_rate*100)}%",
-          "warn" if bounce_rate >= RR_GATES["bounce_rate_max"] else "ok"),
+          "warn" if bounce_rate >= RR_GATES["bounce_rate_max"] else "ok",
+          tickets=[_tk(i) for i in bounced_list]),
     ]
-    if proj_delta is not None:
-        gates.append(g("Schedule confidence", "Projected dev-complete vs. target date",
-                       "on/before target",
-                       f"{'+' if proj_delta > 0 else ''}{proj_delta}d",
-                       "warn" if proj_delta > 0 else "ok"))
-    gates.append(g("Not started", "Tickets still in To Do",
-                   f"≤ {RR_GATES['not_started_max']}", len(not_started),
-                   "warn" if len(not_started) > RR_GATES["not_started_max"] else "ok"))
-    gates.append(g("Due date & release set",
-                   "Team policy: every open ticket needs both until resolved/done",
-                   "0 missing", len(missing_due) + len(no_release),
-                   "bad" if (missing_due or no_release) else "ok"))
+    if schedule["status"] == "na":
+        gates.append(g("Schedule — pace vs capacity",
+                       "Remaining dev work ÷ weeks to target, vs. the team's expected pace",
+                       schedule["note"], "—", "na"))
+    else:
+        rp = schedule["required_pace"]
+        val = "past due" if (schedule["status"] == "warn" and rp is None) else \
+              ("0/wk" if rp is None else f"{rp:.1f}/wk")
+        gates.append(g("Schedule — pace vs capacity",
+                       "Remaining dev work ÷ weeks to target, vs. the team's expected pace",
+                       f"≤ {cap:g}/wk (team capacity)", val, schedule["status"]))
+    gates.append(g("Due date set",
+                   "Team policy: every open ticket needs a due date until resolved/done",
+                   "0 missing", len(missing_due),
+                   "bad" if missing_due else "ok", tickets=dr_tickets))
 
     if any(x["status"] == "bad" and x["level"] == "block" for x in gates):
         verdict = "NO-GO"
@@ -517,13 +580,16 @@ def release_readiness(version_issues, version_name, release_date=None, now=None)
     if crit:
         reasons.append(("bad", f"{len(crit)} open critical bug"
                         f"{'s' if len(crit) != 1 else ''} — must be 0 before release"))
-    if proj_delta is not None and proj_delta > 0:
-        reasons.append(("warn", f"Projected dev-complete {proj_date:%b %-d}, "
-                        f"{proj_delta} day{'s' if proj_delta != 1 else ''} past the target"))
-    if missing_due or no_release:
-        n = len(missing_due) + len(no_release)
-        reasons.append(("bad", f"{n} open ticket{'s' if n != 1 else ''} "
-                        "missing a due date or release"))
+    if schedule["status"] == "warn":
+        rp = schedule["required_pace"]
+        if rp is None:
+            reasons.append(("warn", "Past the target date with development still remaining"))
+        else:
+            reasons.append(("warn", f"Needs {rp:.1f} tickets/wk to hit the target — "
+                            f"above the team's {cap:g}/wk pace"))
+    if missing_due:
+        reasons.append(("bad", f"{len(missing_due)} open ticket"
+                        f"{'s' if len(missing_due) != 1 else ''} missing a due date"))
     if blocked:
         reasons.append(("warn", f"{len(blocked)} blocked ticket"
                         f"{'s' if len(blocked) != 1 else ''}"))
@@ -532,22 +598,27 @@ def release_readiness(version_issues, version_name, release_date=None, now=None)
     if not reasons:
         reasons.append(("ok", "All ship gates pass — clear to release"))
 
-    # --- Development burn-up: weekly cumulative tickets reaching dev-complete ---
+    # --- Development burn-up: daily cumulative tickets reaching dev-complete
+    #     over the selected window (7 / 14 / 30 days) ---
     burnup = []
-    for w in range(8, -1, -1):
-        wk_end = now - dt.timedelta(days=7 * w)
+    for day in range(window_days, -1, -1):
+        day_end = now - dt.timedelta(days=day)
         c = sum(1 for i in issues
-                if (ts := i.timeline.stage_first_entry.get(cfg.STAGE_READY_FOR_QA)) and ts <= wk_end)
-        burnup.append({"days_ago": 7 * w, "count": c})
+                if (ts := i.timeline.stage_first_entry.get(cfg.STAGE_READY_FOR_QA)) and ts <= day_end)
+        burnup.append({"days_ago": day, "count": c})
 
-    # --- Must-clear list: open criticals/highs + blocked, oldest first ---
-    def _row(i, tag, cls):
-        return {"key": i.key, "url": i.url, "summary": i.summary,
-                "tag": tag, "cls": cls, "age": _age_in_status(i)}
-    must_clear = ([_row(i, "Critical", "bad") for i in crit]
-                  + [_row(i, "High", "warn") for i in high]
-                  + [_row(i, "Blocked", "") for i in blocked])
-    must_clear.sort(key=lambda r: -(r["age"] or 0))
+    # --- Must-clear list: open criticals/highs, blocked, and paused, oldest first.
+    #     Paused (dev paused for the day) is tagged distinctly from truly Blocked. ---
+    def _row(i, tag, cls, kind):
+        return {"key": i.key, "url": i.url, "summary": i.summary, "status": i.status,
+                "tag": tag, "cls": cls, "kind": kind, "age": _age_in_status(i)}
+    must_clear = ([_row(i, "Critical", "bad", "bug") for i in crit]
+                  + [_row(i, "High", "warn", "bug") for i in high]
+                  + [_row(i, "Blocked", "bad", "blocked") for i in blocked]
+                  + [_row(i, "Paused", "paused", "paused") for i in paused])
+    # bugs/blocked first (kind order), then oldest first within each
+    _korder = {"bug": 0, "blocked": 1, "paused": 2}
+    must_clear.sort(key=lambda r: (_korder[r["kind"]], -(r["age"] or 0)))
 
     return {
         "version": version_name, "release_date": release_date,
@@ -558,12 +629,16 @@ def release_readiness(version_issues, version_name, release_date=None, now=None)
         "throughput": round(throughput, 1), "remaining_dev": remaining_dev,
         "proj_date": proj_date, "proj_delta": proj_delta,
         "proj_days": (proj_date - today).days if proj_date else None,
+        "proj_representative": proj_representative,
+        "cap_proj_days": cap_proj_days, "cap_proj_date": cap_proj_date,
+        "work_state": work_state, "schedule": schedule,
         "open_critical": len(crit), "open_high": len(high), "blocked": len(blocked),
+        "paused": len(paused),
         "bounce_rate": round(bounce_rate * 100),
         "not_started": len(not_started), "missing_due": len(missing_due),
         "no_release": len(no_release), "unassigned": len(unassigned),
         "gates": gates, "ownership": ownership, "must_clear": must_clear[:12],
-        "burnup": burnup,
+        "burnup": burnup, "window_days": window_days,
         # legacy keys kept so older callers/tests keep working
         "done": counts["done"], "completion_pct": pct(counts["done"]),
         "risk_score": len(crit) * 10 + len(high) * 5 + len(blocked) * 3,

@@ -23,6 +23,7 @@ import config as cfg
 import jira_client as jc
 import reports as R
 import analytics as A
+import settings as st
 
 bp = Blueprint("reports", __name__)
 
@@ -203,20 +204,29 @@ def _burnup_svg(d):
     total = d.get("total") or 0
     if not bu or total == 0:
         return '<div class="rr-muted">No development activity yet.</div>'
-    L, Rt, T, B = 44, 540, 16, 176           # plot box
-    dmin = -56.0
-    dmax = max(14.0, float(d.get("days_to_target") or 0), float(d.get("proj_days") or 0)) or 14.0
+    L, Rt, T, B = 70, 558, 18, 170           # plot box (room for axis titles)
+    ymid = (T + B) / 2
+    win = float(d.get("window_days") or 14)
+    dmin = -win
+    # Keep the selected window filling the x-axis: cap the future zone (projection /
+    # target) to ~1/3 of the axis so the history isn't squeezed to the far left.
+    future_target = max(float(d.get("days_to_target") or 0), float(d.get("cap_proj_days") or 0))
+    dmax = max(win * 0.12, min(future_target, win / 2))
     xp = lambda t: L + (t - dmin) / (dmax - dmin) * (Rt - L)
     yp = lambda c: B - (c / total) * (B - T)
     pts = [(xp(-b["days_ago"]), yp(b["count"])) for b in bu]
     line = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
     area = f"{L:.1f},{B:.1f} " + line + f" {pts[-1][0]:.1f},{B:.1f}"
-    parts = [f'<svg viewBox="0 0 560 200" role="img" aria-label="Development burn-up">']
+    parts = ['<svg viewBox="0 0 580 224" role="img" aria-label="Development burn-up: '
+             'cumulative tickets reaching development-complete over the selected window, versus scope and the target date.">']
     # gridlines + y labels (0, half, full)
     for frac in (0, 0.5, 1):
         y = yp(total * frac)
         parts.append(f'<line x1="{L}" y1="{y:.1f}" x2="{Rt}" y2="{y:.1f}" stroke="#eef1ef"/>')
-        parts.append(f'<text x="{L-6}" y="{y+3:.1f}" font-size="9" fill="#98a099" text-anchor="end">{round(total*frac)}</text>')
+        parts.append(f'<text x="{L-8}" y="{y+3:.1f}" font-size="9" fill="#98a099" text-anchor="end">{round(total*frac)}</text>')
+    # y-axis title (rotated)
+    parts.append(f'<text x="20" y="{ymid:.1f}" font-size="10" fill="#6b756e" font-weight="600" '
+                 f'text-anchor="middle" transform="rotate(-90 20 {ymid:.1f})">Tickets dev-complete</text>')
     # scope line
     parts.append(f'<line x1="{L}" y1="{yp(total):.1f}" x2="{Rt}" y2="{yp(total):.1f}" stroke="#98a099" stroke-dasharray="2 3"/>')
     parts.append(f'<text x="{Rt}" y="{yp(total)-4:.1f}" font-size="9" fill="#98a099" text-anchor="end">scope {total}</text>')
@@ -225,19 +235,53 @@ def _burnup_svg(d):
     parts.append(f'<polyline points="{line}" fill="none" stroke="#17864e" stroke-width="2.5"/>')
     lx, ly = pts[-1]
     parts.append(f'<circle cx="{lx:.1f}" cy="{ly:.1f}" r="3.5" fill="#17864e"/>')
-    # projection (dashed) to (proj_days, total)
-    pd = d.get("proj_days")
-    if pd is not None and pd > 0:
-        parts.append(f'<polyline points="{lx:.1f},{ly:.1f} {xp(pd):.1f},{yp(total):.1f}" '
-                     f'fill="none" stroke="#b7791f" stroke-width="2" stroke-dasharray="5 4"/>')
-        parts.append(f'<circle cx="{xp(pd):.1f}" cy="{yp(total):.1f}" r="3" fill="#b7791f"/>')
-    # target marker
+    sc = bu[-1]["count"]  # current dev-complete count (start of both trend lines)
+    # required-pace reference line (blue): the slope needed to reach scope by the
+    # target. This is the schedule signal, robust to not-yet-started releases.
     td = d.get("days_to_target")
-    if td is not None and td >= 0:
-        parts.append(f'<line x1="{xp(td):.1f}" y1="{T}" x2="{xp(td):.1f}" y2="{B}" stroke="#d64545" stroke-width="1.5" stroke-dasharray="3 3"/>')
-        parts.append(f'<text x="{xp(td):.1f}" y="{B+14}" font-size="9" fill="#d64545" text-anchor="middle">target</text>')
+    if td is not None and td > 0 and total > sc:
+        rx_end = min(float(td), dmax)
+        ry_val = sc + (total - sc) * (rx_end / td)
+        rx, ry = xp(rx_end), yp(ry_val)
+        parts.append(f'<polyline points="{lx:.1f},{ly:.1f} {rx:.1f},{ry:.1f}" '
+                     f'fill="none" stroke="#0065ff" stroke-width="1.6" stroke-dasharray="4 3" opacity="0.85"/>')
+        parts.append(f'<text x="{rx-2:.1f}" y="{ry+11:.1f}" font-size="8" fill="#0065ff" text-anchor="end">needed pace</text>')
+    # "at pace" projection (amber): the finish trajectory at the team's expected
+    # pace (the capacity set in Settings), so this line responds to that number.
+    cpd = d.get("cap_proj_days")
+    if cpd is not None and cpd > 0 and total > sc:
+        x_end = min(float(cpd), dmax)
+        y_val = sc + (total - sc) * (x_end / cpd)
+        ex, ey = xp(x_end), yp(y_val)
+        parts.append(f'<polyline points="{lx:.1f},{ly:.1f} {ex:.1f},{ey:.1f}" '
+                     f'fill="none" stroke="#b7791f" stroke-width="2" stroke-dasharray="5 4"/>')
+        cdate = d.get("cap_proj_date")
+        if cpd <= dmax:
+            parts.append(f'<circle cx="{ex:.1f}" cy="{ey:.1f}" r="3" fill="#b7791f"/>')
+        elif cdate:
+            parts.append(f'<text x="{ex-2:.1f}" y="{ey-5:.1f}" font-size="8" fill="#b7791f" '
+                         f'text-anchor="end">at pace {cdate.strftime("%b %-d")}</text>')
+    # x-axis day ticks (past window)
+    seen_ticks = set()
+    for frac in (1.0, 2 / 3, 1 / 3):
+        da = round(win * frac)
+        if da <= 0 or da in seen_ticks:
+            continue
+        seen_ticks.add(da)
+        parts.append(f'<text x="{xp(-da):.1f}" y="{B+14}" font-size="8" fill="#b7bcb7" text-anchor="middle">-{da}d</text>')
+    # now marker
     parts.append(f'<line x1="{xp(0):.1f}" y1="{T}" x2="{xp(0):.1f}" y2="{B}" stroke="#c9cdca"/>')
-    parts.append(f'<text x="{xp(0):.1f}" y="{B+14}" font-size="9" fill="#98a099" text-anchor="middle">now</text>')
+    parts.append(f'<text x="{xp(0):.1f}" y="{B+14}" font-size="9" fill="#6b756e" font-weight="600" text-anchor="middle">now</text>')
+    # target marker — a vertical line if the target falls within view, else a note
+    td = d.get("days_to_target")
+    if td is not None and dmin <= td <= dmax:
+        parts.append(f'<line x1="{xp(td):.1f}" y1="{T}" x2="{xp(td):.1f}" y2="{B}" stroke="#d64545" stroke-width="1.5" stroke-dasharray="3 3"/>')
+        parts.append(f'<text x="{xp(td):.1f}" y="{B+25}" font-size="9" fill="#d64545" text-anchor="middle">target</text>')
+    elif td is not None and td > dmax:
+        parts.append(f'<text x="{Rt:.1f}" y="{T+9:.1f}" font-size="8" fill="#d64545" text-anchor="end">target +{int(td)}d &#8594;</text>')
+    # x-axis title
+    parts.append(f'<text x="{(L+Rt)/2:.1f}" y="{B+40}" font-size="10" fill="#6b756e" font-weight="600" '
+                 f'text-anchor="middle">Time (days, past &#8594; projected)</text>')
     parts.append('</svg>')
     return "".join(parts)
 
@@ -245,9 +289,12 @@ def _burnup_svg(d):
 REL = """
 <style>
 .rrw{max-width:1120px;margin:0 auto}
-.rrw .eyebrow{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#6b756e}
-.rrw h1.rt{font-size:24px;font-weight:800;margin:2px 0 4px;letter-spacing:-.4px}
-.rrw .rsub{color:#6b756e;font-size:13.5px;margin:0 0 16px}
+.rrw .rr-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.rrw .rr-head h2{margin:0}
+.rrw .rr-seg{display:inline-flex;background:#eef1ef;border-radius:8px;padding:2px;flex:none}
+.rrw .rr-seg a{font-size:12px;font-weight:600;color:#3a453e;padding:4px 11px;border-radius:6px;text-decoration:none;line-height:1.3}
+.rrw .rr-seg a:hover{color:#1c2620}
+.rrw .rr-seg a.on{background:#fff;color:#17864e;box-shadow:0 1px 2px rgba(9,30,20,.12)}
 .rrw .rsw{display:flex;align-items:center;gap:12px;margin:14px 0 20px;flex-wrap:wrap}
 .rrw .rsw-lbl{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6b756e}
 .rrw .rsw-box{position:relative}
@@ -299,7 +346,7 @@ REL = """
 .rrw .tile .val small{font-size:14px;font-weight:600;color:#6b756e}
 .rrw .tile .meta{font-size:12px;color:#6b756e}
 .rrw .chip{font-size:11px;font-weight:700;padding:3px 8px;border-radius:999px}
-.rrw .chip.ok{background:#e9f6ef;color:#17864e}.rrw .chip.warn{background:#fdf3e3;color:#8a5a14}.rrw .chip.bad{background:#fbeaea;color:#a82f2f}
+.rrw .chip.ok{background:#e9f6ef;color:#17864e}.rrw .chip.warn{background:#fdf3e3;color:#8a5a14}.rrw .chip.bad{background:#fbeaea;color:#a82f2f}.rrw .chip.na{background:#eef1ef;color:#6b756e}
 .rrw .th{display:flex;justify-content:space-between;align-items:center;gap:8px}
 .rrw .rbar{height:7px;background:#eef1ef;border-radius:999px;overflow:hidden}
 .rrw .rbar>span{display:block;height:100%;background:#1fa963;border-radius:999px}
@@ -318,12 +365,13 @@ REL = """
 .rrw .fn small{display:block;font-weight:600;color:#6b756e;font-size:11px}
 .rrw .gaps{display:grid;grid-template-columns:1fr 1fr;gap:6px 18px;font-size:12.5px;margin-top:4px}
 .rrw .gaps .k{display:flex;justify-content:space-between;gap:10px;color:#3a453e}
-.rrw .rubric{display:flex;flex-direction:column;gap:1px;background:#eef1ef;border:1px solid #e4e7e5;border-radius:8px;overflow:hidden}
-.rrw .rrow{display:grid;grid-template-columns:1fr auto auto;gap:14px;align-items:center;background:#fff;padding:11px 14px}
+.rrw .rubric{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px}
+.rrw .rrow{display:flex;flex-direction:column;gap:9px;background:#fff;border:1px solid #e4e7e5;border-radius:10px;padding:12px 14px;box-shadow:0 1px 2px rgba(9,30,20,.04)}
 .rrw .rrow .name{font-size:13px;font-weight:600;color:#1c2620}
-.rrw .rrow .name small{display:block;font-weight:400;color:#6b756e;font-size:11.5px}
-.rrw .rrow .measure{font-size:11px;color:#98a099;text-align:right;max-width:220px}
-.rrw .rrow .st{justify-self:end;display:flex;align-items:center;gap:8px}
+.rrw .rrow .name small{display:block;font-weight:400;color:#6b756e;font-size:11.5px;margin-top:1px}
+.rrw .rrow .foot{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.rrw .rrow .measure{font-size:11px;color:#98a099}
+.rrw .rrow .st{display:flex;align-items:center;gap:8px}
 .rrw .rrow .st .v{font-size:15px;font-weight:800}
 .rrw .own{display:flex;flex-direction:column;gap:9px}
 .rrw .orow{display:grid;grid-template-columns:120px 1fr 34px;gap:10px;align-items:center;font-size:12.5px}
@@ -336,14 +384,24 @@ REL = """
 .rrw table.mc th{font-size:11px;color:#6b756e;text-transform:uppercase;letter-spacing:.03em}
 .rrw .tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;background:#eef1ef;color:#3a453e}
 .rrw .tag.bad{background:#fbeaea;color:#a82f2f}.rrw .tag.warn{background:#fdf3e3;color:#8a5a14}
+.rrw .tag.paused{background:#eef4fb;color:#3b6ea5}
 .rrw .age{color:#a82f2f;font-weight:600}
+.rrw .rr-fg{border-top:1px solid #eef1ef;padding:12px 0}
+.rrw .rr-fg:first-of-type{border-top:none;padding-top:2px}
+.rrw .rr-fg-h{display:flex;align-items:center;gap:9px;font-size:13px;margin-bottom:7px}
+.rrw .rr-fg-h .muted{margin-left:auto;font-size:11.5px;color:#98a099}
+.rrw .rr-tickets{display:flex;flex-direction:column;gap:2px}
+.rrw .rr-tk{display:flex;align-items:baseline;gap:10px;padding:5px 8px;border-radius:6px;text-decoration:none;font-size:12.5px}
+.rrw .rr-tk:hover{background:#eef1ef}
+.rrw .rr-tk .k{font-weight:700;color:#17864e;flex:none}
+.rrw .rr-tk .s{color:#3a453e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rrw .rr-tk .n{margin-left:auto;color:#a82f2f;font-size:11px;font-weight:600;flex:none;white-space:nowrap}
 .rrw .rr-muted{color:#6b756e;font-size:12.5px;padding:20px 0}
 @media (max-width:820px){.rrw .tiles{grid-template-columns:repeat(2,1fr)}.rrw .grid2{grid-template-columns:1fr}.rrw .verdict{grid-template-columns:1fr}.rrw .countdown{border-left:none;padding-left:0;text-align:left}}
 </style>
 <div class="rrw">
-<div class="eyebrow">Release Readiness</div>
-{% if not d %}<h1 class="rt">Pick a release</h1>
-<div class="rsub">Choose a fix version to see how ready it is to ship.</div>{% endif %}
+<h1>Release Readiness</h1>
+<div class="sub">Is this release ready to ship, and what's standing in the way?</div>
 {% if not versions_data %}
 <div class="rsw"><span class="rr-muted">No unreleased fix versions found.</span></div>
 {% else %}
@@ -409,8 +467,6 @@ REL = """
 {% if d %}
 {% set vcls = {'GO':'go','AT RISK':'risk','NO-GO':'no'}[d.verdict] %}
 {% set fcolor = {'dev_completed':'#00b8d9','passed_qa':'#6554c0','passed_staging':'#57d9a3','in_production':'#00875a','done':'#36b37e'} %}
-<h1 class="rt">{{ d.version }}</h1>
-<div class="rsub">Is this fix version ready to ship, and if not, what's standing in the way?</div>
 
 <div class="verdict {{ vcls }}">
   <div><span class="badge {{ vcls }}">{{ d.verdict }}</span></div>
@@ -427,11 +483,20 @@ REL = """
   <div class="tile"><div class="th"><span class="tl">Development completed</span><span class="chip {{ 'ok' if d.dev_completed_pct>=50 else 'warn' }}">+{{ d.throughput }} / wk</span></div>
     <div class="val">{{ d.dev_completed_pct }}<small>%</small></div><div class="rbar"><span style="width:{{ d.dev_completed_pct }}%"></span></div>
     <div class="meta">{{ d.dev_completed }} of {{ d.total }} reached Ready-for-QA+</div></div>
-  <div class="tile"><div class="th"><span class="tl">Projected dev-complete</span>{% if d.proj_delta is not none %}<span class="chip {{ 'warn' if d.proj_delta>0 else 'ok' }}">{{ '%+d'|format(d.proj_delta) }}d</span>{% endif %}</div>
-    <div class="val">{% if d.proj_date %}{{ d.proj_date.strftime('%b %-d') }}{% else %}—{% endif %}</div>
-    <div class="meta">{{ d.remaining_dev }} left ÷ ~{{ d.throughput }}/wk</div></div>
+  <div class="tile"><div class="th"><span class="tl">Schedule &middot; pace</span>
+    <span class="chip {{ d.schedule.status }}">{{ {'ok':'on track','warn':'behind','bad':'behind','na':'n/a'}[d.schedule.status] }}</span></div>
+    {% if d.schedule.status=='na' and not d.schedule.capacity %}
+    <div class="val" style="font-size:17px"><a href="/settings">Set pace →</a></div>
+    <div class="meta">expected tickets/wk not set in Settings</div>
+    {% elif d.schedule.required_pace is not none %}
+    <div class="val">{{ '%.1f'|format(d.schedule.required_pace) }}<small>/wk needed</small></div>
+    <div class="meta">team capacity {{ '%g'|format(d.schedule.capacity) }}/wk{% if d.work_state=='not_started' %} · not started yet{% endif %}</div>
+    {% else %}
+    <div class="val" style="font-size:18px">{{ d.schedule.note or 'On track' }}</div>
+    <div class="meta">{% if d.days_to_target is not none %}{{ d.days_to_target }} days to target{% endif %}</div>
+    {% endif %}</div>
   <div class="tile"><div class="th"><span class="tl">Blockers to ship</span><span class="chip {{ 'bad' if (d.open_critical+d.blocked)>0 else 'ok' }}">{{ 'action' if (d.open_critical+d.blocked)>0 else 'clear' }}</span></div>
-    <div class="val">{{ d.open_critical + d.blocked }}</div><div class="meta">{{ d.open_critical }} critical bug{{ 's' if d.open_critical!=1 else '' }} · {{ d.blocked }} blocked</div></div>
+    <div class="val">{{ d.open_critical + d.blocked }}</div><div class="meta">{{ d.open_critical }} critical bug{{ 's' if d.open_critical!=1 else '' }} · {{ d.blocked }} blocked{% if d.paused %} · {{ d.paused }} paused (not a blocker){% endif %}</div></div>
   <div class="tile"><div class="th"><span class="tl">Release-ready (passed staging)</span><span class="chip {{ 'ok' if d.passed_staging_pct>=80 else 'warn' }}">{{ d.passed_staging_pct }}%</span></div>
     <div class="val">{{ d.passed_staging }} <small>/ {{ d.total }}</small></div><div class="rbar"><span style="width:{{ d.passed_staging_pct }}%;background:#57d9a3"></span></div>
     <div class="meta">verified in staging, awaiting cutover</div></div>
@@ -439,8 +504,13 @@ REL = """
 
 <div class="grid2">
   <div class="panel">
-    <h2>Development burn-up</h2>
-    <div class="hint">Tickets reaching development-complete over time, projected against the target date.</div>
+    <div class="rr-head">
+      <h2>Development burn-up</h2>
+      <div class="rr-seg">
+        {% for w in [7, 14, 30] %}<a href="/release?version={{ chosen|urlencode }}&amp;win={{ w }}" class="{{ 'on' if window_days==w else '' }}">{{ w }}d</a>{% endfor %}
+      </div>
+    </div>
+    <div class="hint">Tickets reaching development-complete over the last {{ window_days }} days. <b style="color:#0065ff">Blue</b> = pace needed to hit the target; <b style="color:#b7791f">amber</b> = projected finish at your team's pace{% if d.schedule.capacity %} ({{ '%g'|format(d.schedule.capacity) }}/wk){% else %} (set it in Settings){% endif %}.</div>
     {{ burnup_svg|safe }}
   </div>
   <div class="panel">
@@ -458,7 +528,7 @@ REL = """
     <div class="gaps">
       <div class="k"><span>Missing due date</span><b style="color:#a82f2f">{{ d.missing_due }}</b></div>
       <div class="k"><span>Not started (To Do)</span><b style="color:#8a5a14">{{ d.not_started }}</b></div>
-      <div class="k"><span>Missing release</span><b>{{ d.no_release }}</b></div>
+      <div class="k"><span>Paused (for the day)</span><b>{{ d.paused }}</b></div>
       <div class="k"><span>Unassigned</span><b>{{ d.unassigned }}</b></div>
     </div>
   </div>
@@ -469,10 +539,14 @@ REL = """
   <div class="hint">Each gate has an explicit threshold. The verdict is the worst status across all gates.</div>
   <div class="rubric">
   {% for g in d.gates %}
-    <div class="rrow"><div class="name">{{ g.name }}<small>{{ g.sub }}</small></div>
-      <div class="measure">gate: {{ g.measure }}</div>
-      <div class="st"><span class="v" style="color:{{ '#a82f2f' if g.status=='bad' else ('#8a5a14' if g.status=='warn' else '#17864e') }}">{{ g.value }}</span>
-        <span class="chip {{ g.status }}">{{ {'ok':'OK','warn':'OVER','bad':'FAIL'}[g.status] }}</span></div></div>
+    <div class="rrow">
+      <div class="name">{{ g.name }}<small>{{ g.sub }}</small></div>
+      <div class="foot">
+        <div class="measure">gate: {{ g.measure }}</div>
+        <div class="st"><span class="v" style="color:{{ '#a82f2f' if g.status=='bad' else ('#8a5a14' if g.status=='warn' else ('#98a099' if g.status=='na' else '#17864e')) }}">{{ g.value }}</span>
+          <span class="chip {{ g.status }}">{{ {'ok':'OK','warn':'OVER','bad':'FAIL','na':'N/A'}[g.status] }}</span></div>
+      </div>
+    </div>
   {% endfor %}
   </div>
 </div>
@@ -492,16 +566,35 @@ REL = """
   </div>
   <div class="panel">
     <h2>Must-clear before ship</h2>
-    <div class="hint">Open critical/high bugs and blocked tickets, oldest first.</div>
+    <div class="hint">Open bugs, blocked, and paused work — oldest first. <b>Paused</b> = a developer paused for the day, not a blocker.</div>
     <table class="mc"><tr><th>Key</th><th>Summary</th><th>Type</th><th>Age</th></tr>
     {% for r in d.must_clear %}
       <tr><td><a href="{{ r.url }}" target="_blank">{{ r.key }}</a></td><td>{{ r.summary|truncate(48) }}</td>
-      <td><span class="tag {{ r.cls }}">{{ r.tag }}</span></td>
+      <td><span class="tag {{ r.cls }}" title="{{ r.status }}">{{ r.tag }}</span></td>
       <td class="{{ 'age' if r.age and r.age>=5 else '' }}">{{ fmt(r.age) }}</td></tr>
     {% else %}<tr><td colspan="4" class="rr-muted">Nothing blocking. 🎉</td></tr>{% endfor %}
     </table>
   </div>
 </div>
+
+{% set ns = namespace(any=false) %}
+{% for g in d.gates %}{% if g.tickets and g.status in ['warn','bad'] %}{% set ns.any = true %}{% endif %}{% endfor %}
+{% if ns.any %}
+<div class="panel">
+  <h2>What's flagged — the tickets behind each gate</h2>
+  <div class="hint">Every gate above that isn't passing, with the specific tickets. Click a key to open it in Jira.</div>
+  {% for g in d.gates %}{% if g.tickets and g.status in ['warn','bad'] %}
+  <div class="rr-fg">
+    <div class="rr-fg-h"><span class="chip {{ g.status }}">{{ {'warn':'OVER','bad':'FAIL'}[g.status] }}</span><b>{{ g.name }}</b><span class="muted">{{ g.tickets|length }} ticket{{ 's' if g.tickets|length != 1 else '' }}</span></div>
+    <div class="rr-tickets">
+      {% for t in g.tickets %}
+      <a href="{{ t.url }}" target="_blank" class="rr-tk"><span class="k">{{ t.key }}</span><span class="s">{{ t.summary|truncate(60) }}</span>{% if t.note %}<span class="n">{{ t.note }}</span>{% endif %}</a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}{% endfor %}
+</div>
+{% endif %}
 {% endif %}
 </div>
 """
@@ -556,10 +649,12 @@ def _version_meta(name, release_date, today):
     }
 
 
-def release_context(chosen):
+def release_context(chosen, window_days=14):
     """Build the Release Readiness template context. Produces the release-switcher
     metadata (platform / type / date / urgency per version) and, when nothing is
     chosen, defaults to the soonest upcoming release. Shared by the /release page."""
+    if window_days not in (7, 14, 30):
+        window_days = 14
     today = dt.date.today()
     date_by_name, metas = {}, []
     for v in jc.fetch_project_versions():
@@ -586,19 +681,25 @@ def release_context(chosen):
     selected = next((m for m in metas if m["name"] == chosen), None)
     d, burnup_svg = None, ""
     if chosen:
+        cap = st.load().get("release_capacity_per_week", 0) or 0
         d = R.release_readiness(jc.fetch_issues_for_version(chosen), chosen,
-                                release_date=date_by_name.get(chosen))
+                                release_date=date_by_name.get(chosen),
+                                window_days=window_days, capacity_per_week=cap)
         burnup_svg = _burnup_svg(d)
     return {"versions_data": metas, "platforms": platforms, "chosen": chosen,
-            "selected": selected, "d": d, "burnup_svg": burnup_svg}
+            "selected": selected, "d": d, "burnup_svg": burnup_svg, "window_days": window_days}
 
 
 @bp.route("/reports/release")
 def release():
     # Release Readiness now lives at /release (a top-level nav page). Keep the old
-    # URL working by redirecting, preserving the selected version.
-    chosen = request.args.get("version")
-    return redirect("/release" + (("?version=" + quote(chosen)) if chosen else ""), code=302)
+    # URL working by redirecting, preserving the selected version and window.
+    q = []
+    if request.args.get("version"):
+        q.append("version=" + quote(request.args["version"]))
+    if request.args.get("win"):
+        q.append("win=" + quote(request.args["win"]))
+    return redirect("/release" + ("?" + "&".join(q) if q else ""), code=302)
 
 
 # ---------------------------------------------------------------------------
