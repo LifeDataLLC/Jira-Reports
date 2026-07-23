@@ -425,6 +425,8 @@ SETTINGS_TMPL = """
     <input type="number" min="1" name="stale_days" value="{{ s.stale_days }}" style="width:70px"></label><br><br>
   <label style="font-size:13px">Investigator gap spacer (days)
     <input type="number" min="1" name="gap_days" value="{{ s.gap_days }}" style="width:70px"></label><br><br>
+  <label style="font-size:13px">Expected delivery pace (tickets reaching dev-complete / week; 0 = unset)
+    <input type="number" min="0" step="0.5" name="release_capacity_per_week" value="{{ s.release_capacity_per_week }}" style="width:70px"></label><br><br>
   <label style="font-size:13px">PR/build keywords (comma-separated)<br>
     <input name="pr_keywords" value="{{ s.pr_keywords|join(', ') }}" style="width:96%"></label><br><br>
   <label style="font-size:13px">Blocked labels (comma-separated)<br>
@@ -525,6 +527,10 @@ def settings_screen():
                 s[num_key] = max(int(form.get(num_key) or s[num_key]), 1)
             except ValueError:
                 pass
+        try:  # release capacity allows 0 (= unset)
+            s["release_capacity_per_week"] = max(float(form.get("release_capacity_per_week") or 0), 0)
+        except ValueError:
+            pass
         for list_key in ("pr_keywords", "blocked_labels", "board_ids"):
             s[list_key] = [x.strip() for x in (form.get(list_key) or "").split(",") if x.strip()]
         s["start_date_field"] = (form.get("start_date_field") or "").strip() or None
@@ -895,7 +901,11 @@ SHELL_TMPL = """
 def release_screen():
     """Release Readiness as a top-level screen (replaces Planning in the nav)."""
     import reports_web as rw
-    ctx = rw.release_context(request.args.get("version"))
+    try:
+        win = int(request.args.get("win", 14))
+    except (TypeError, ValueError):
+        win = 14
+    ctx = rw.release_context(request.args.get("version"), window_days=win)
     return page(rw.REL, active="/release", fmt=rw.fmt, **ctx)
 
 

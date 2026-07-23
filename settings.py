@@ -72,6 +72,10 @@ DEFAULTS = {
     "gap_days": 7,
     # My Day: mark a ticket "stale" when its status hasn't changed in this many days
     "stale_days": 10,
+    # Release Readiness: the team's expected delivery pace — tickets reaching
+    # development-complete per week — used to judge whether a release's remaining
+    # work fits before its target date. 0 = unset (schedule check stays neutral).
+    "release_capacity_per_week": 0,
     # Sprint boards (moved here from env per Phase 5)
     "board_ids": [],
     # Start-date custom field id (runtime-detected; admin-overridable)

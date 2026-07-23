@@ -123,6 +123,11 @@ ACTIVE_STAGES = {
 BLOCKED_STAGES = {STAGE_PAUSED}
 DONE_STAGES = {STAGE_DONE}
 
+# Genuinely-blocked statuses, as opposed to the "Pause …" statuses which just mean a
+# developer paused work (e.g. at end of day). Both map to the paused stage, but the
+# Release page distinguishes "blocked" from "paused".
+BLOCKED_STATUSES = {"Blocked", "Customer Feedback", "Cannot Reproduce"}
+
 
 def load_status_stage() -> dict:
     """Allow an external JSON override file (JIRA_STATUS_MAP=path) to win."""
