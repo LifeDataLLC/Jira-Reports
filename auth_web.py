@@ -195,7 +195,7 @@ def register():
 
 USERS_TMPL = """
 <h1>Users</h1>
-<div class="sub">Manage accounts. Admins can view any developer; employees are locked to one.</div>
+<div class="sub">Manage accounts. Each account can be linked to a developer — change it any time from the Developer column below.</div>
 {% if error %}<div class="banner" style="background:#ffebe6;border-color:#ffbdad;color:#bf2600">{{ error }}</div>{% endif %}
 {% if msg %}<div class="banner" style="background:#e3fcef;border-color:#abf5d1;color:#006644">{{ msg }}</div>{% endif %}
 <div class="sectionbox">
@@ -219,7 +219,16 @@ USERS_TMPL = """
 <tr><th>Email</th><th>Role</th><th>Developer</th><th>Created</th><th></th></tr>
 {% for u in users %}
 <tr><td>{{ u.email }}</td><td><span class="pill {{ 'bad' if u.role=='admin' else '' }}">{{ u.role }}</span></td>
-<td>{{ u.developer or '—' }}</td><td class="muted">{{ u.created_at[:10] }}</td>
+<td>
+  <form method="post" style="display:inline-flex;gap:5px;align-items:center">
+    <input type="hidden" name="action" value="set_developer"><input type="hidden" name="email" value="{{ u.email }}">
+    <select name="developer_id" style="padding:5px 7px;border:1px solid #dfe1e6;border-radius:6px;font-size:12px">
+      <option value="">— none —</option>
+      {% for d in all_devs %}<option value="{{ d.id }}"{{ ' selected' if (d.id==u.developer_id or (not u.developer_id and d.name==u.developer)) else '' }}>{{ d.name }}</option>{% endfor %}
+    </select>
+    <button class="btn-ghost" type="submit">Update</button>
+  </form>
+</td><td class="muted">{{ u.created_at[:10] }}</td>
 <td>
 <form method="post" style="display:inline" onsubmit="return confirm('Reset the password for {{ u.email }}? A new temporary password will be generated and shown once.')"><input type="hidden" name="action" value="reset"><input type="hidden" name="email" value="{{ u.email }}"><button class="btn-ghost" type="submit">Reset password</button></form>
 <form method="post" style="display:inline" onsubmit="return confirm('Delete {{ u.email }}?')"><input type="hidden" name="action" value="delete"><input type="hidden" name="email" value="{{ u.email }}"><button class="btn-ghost" type="submit">Delete</button></form>
@@ -263,5 +272,15 @@ def admin_users():
                 msg = "Account created. The user sets their own password on first login."
             except auth.AuthError as e:
                 error = str(e)
+        elif action == "set_developer":
+            target = request.form.get("email", "")
+            did = request.form.get("developer_id") or None
+            try:
+                auth.set_developer(target, developer=dev_by_id.get(did), developer_id=did)
+                msg = (f"Linked {target} to {dev_by_id[did]}." if did
+                       else f"Unlinked {target} from any developer.")
+            except auth.AuthError as e:
+                error = str(e)
     return screens_web.page(USERS_TMPL, active="/settings", users=auth.list_users(),
-                            developers=auth.visible_developers(), error=error, msg=msg)
+                            developers=auth.visible_developers(),
+                            all_devs=auth.all_developers(), error=error, msg=msg)
