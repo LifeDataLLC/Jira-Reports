@@ -302,7 +302,7 @@ REL = """
 .rrw .rsw-trigger:hover{border-color:#98a099}
 .rrw .rsw-trigger.open{border-color:#1fa963;box-shadow:0 0 0 3px rgba(31,169,99,.2)}
 .rrw .rsw-dot{width:9px;height:9px;border-radius:50%;flex:none;display:inline-block}
-.rrw .rsw-dot.red{background:#d64545}.rrw .rsw-dot.amber{background:#b7791f}.rrw .rsw-dot.green{background:#1fa963}.rrw .rsw-dot.none{background:#c9cdca}
+.rrw .rsw-dot.red{background:#d64545}.rrw .rsw-dot.amber{background:#b7791f}.rrw .rsw-dot.green{background:#1fa963}.rrw .rsw-dot.none{background:#c9cdca}.rrw .rsw-dot.shipped{background:#8993a4}
 .rrw .rsw-name{font-weight:700;font-size:14px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rrw .rsw-meta{font-size:12px;color:#6b756e;white-space:nowrap}
 .rrw .rsw-chev{color:#98a099;font-size:11px}
@@ -411,7 +411,7 @@ REL = """
     <div class="rsw-trigger" id="rswTrigger" onclick="rswToggle()">
       <span class="rsw-dot {{ selected.cls if selected else 'none' }}"></span>
       <span class="rsw-name">{{ selected.name if selected else 'Choose a release' }}</span>
-      <span class="rsw-meta">{% if selected and selected.date_label %}ships {{ selected.date_label }}{% if selected.days is not none %} · {% if selected.days < 0 %}{{ -selected.days }}d overdue{% else %}{{ selected.days }} days{% endif %}{% endif %}{% endif %}</span>
+      <span class="rsw-meta">{% if selected %}{% if selected.shipped %}shipped {{ selected.date_label }}{% elif selected.date_label %}ships {{ selected.date_label }}{% if selected.days is not none %} · {% if selected.days < 0 %}{{ -selected.days }}d overdue{% else %}{{ selected.days }} days{% endif %}{% endif %}{% endif %}{% endif %}</span>
       <span class="rsw-chev">&#9660;</span>
     </div>
     <div class="rsw-menu" id="rswMenu">
@@ -421,7 +421,7 @@ REL = """
         {% for p in platforms %}<button data-p="{{ p }}" onclick="rswSetPlat('{{ p }}',this)">{{ p }}</button>{% endfor %}
       </div>
       <div class="rsw-list" id="rswList"></div>
-      <div class="rsw-legend"><span><span class="rsw-dot red"></span>overdue</span><span><span class="rsw-dot amber"></span>&le; 7 days</span><span><span class="rsw-dot green"></span>on track</span></div>
+      <div class="rsw-legend"><span><span class="rsw-dot red"></span>overdue</span><span><span class="rsw-dot amber"></span>&le; 7 days</span><span><span class="rsw-dot green"></span>on track</span><span><span class="rsw-dot shipped"></span>shipped</span></div>
     </div>
   </div>
 </div>
@@ -433,7 +433,9 @@ REL = """
       list=document.getElementById('rswList'), search=document.getElementById('rswSearch');
   if(!trigger) return;
   function esc(s){return String(s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
-  function whenTxt(v){if(!v.date_label)return 'no date';if(v.days===null)return esc(v.date_label);
+  function whenTxt(v){
+    if(v.shipped)return 'shipped '+esc(v.date_label);
+    if(!v.date_label)return 'no date';if(v.days===null)return esc(v.date_label);
     return esc(v.date_label)+' &middot; <b>'+(v.days<0?(-v.days)+'d overdue':v.days+'d')+'</b>';}
   window.rswToggle=function(){var o=menu.classList.toggle('open');trigger.classList.toggle('open',o);if(o){search.focus();rswRender();}};
   window.rswSetPlat=function(p,btn){plat=p;var seg=document.getElementById('rswSeg');
@@ -442,13 +444,17 @@ REL = """
   window.rswRender=function(){
     var q=(search.value||'').trim().toLowerCase();
     var rows=DATA.filter(function(v){return (plat==='all'||v.platform===plat)&&(!q||v.name.toLowerCase().indexOf(q)>=0);});
-    rows.sort(function(a,b){var pa=order[a.platform]==null?9:order[a.platform],pb=order[b.platform]==null?9:order[b.platform];
+    rows.sort(function(a,b){
+      if(a.shipped!==b.shipped)return a.shipped?1:-1;                    // active first, shipped last
+      if(a.shipped)return (b.days==null?-1e9:b.days)-(a.days==null?-1e9:a.days); // most-recently shipped first
+      var pa=order[a.platform]==null?9:order[a.platform],pb=order[b.platform]==null?9:order[b.platform];
       if(pa!==pb)return pa-pb;var da=a.days==null?1e9:a.days,db=b.days==null?1e9:b.days;return da-db;});
     list.innerHTML='';
     if(!rows.length){list.innerHTML='<div class="rsw-empty">No releases match.</div>';return;}
     var cur=null;
     rows.forEach(function(v){
-      if(v.platform!==cur){cur=v.platform;var h=document.createElement('div');h.className='rsw-grp';h.textContent=v.platform;list.appendChild(h);}
+      var gkey=v.shipped?'Recently shipped':v.platform;
+      if(gkey!==cur){cur=gkey;var h=document.createElement('div');h.className='rsw-grp';h.textContent=gkey;list.appendChild(h);}
       var o=document.createElement('div');o.className='rsw-opt'+(v.name===CHOSEN?' sel':'');
       o.onclick=function(){window.location='/release?version='+encodeURIComponent(v.name);};
       o.innerHTML='<span class="rsw-dot '+v.cls+'"></span><span class="nm">'+esc(v.short||v.name)+
@@ -635,9 +641,12 @@ def _short_name(name):
     return name
 
 
-def _version_meta(name, release_date, today):
+def _version_meta(name, release_date, today, released=False):
     days = (release_date - today).days if release_date else None
-    cls = "none" if days is None else ("red" if days < 0 else ("amber" if days <= 7 else "green"))
+    if released:
+        cls = "shipped"
+    else:
+        cls = "none" if days is None else ("red" if days < 0 else ("amber" if days <= 7 else "green"))
     return {
         "name": name,
         "short": _short_name(name),
@@ -646,6 +655,7 @@ def _version_meta(name, release_date, today):
         "date_label": release_date.strftime("%b %-d") if release_date else "",
         "days": days,
         "cls": cls,
+        "shipped": released,
     }
 
 
@@ -656,14 +666,18 @@ def release_context(chosen, window_days=14):
     if window_days not in (7, 14, 30):
         window_days = 14
     today = dt.date.today()
+    SHIPPED_WINDOW = 7  # also show releases shipped within the last week
     date_by_name, metas = {}, []
     for v in jc.fetch_project_versions():
-        if v.get("released"):
-            continue
         name = v.get("name")
         rd = R._parse_date(v.get("releaseDate"))
+        released = bool(v.get("released"))
+        # Unreleased versions always show (incl. overdue / not-yet-closed-out ones);
+        # released versions only if they shipped within the last week.
+        if released and not (rd and 0 <= (today - rd).days <= SHIPPED_WINDOW):
+            continue
         date_by_name[name] = rd
-        metas.append(_version_meta(name, rd, today))
+        metas.append(_version_meta(name, rd, today, released))
 
     def sort_key(m):
         pidx = _PLATFORM_ORDER.index(m["platform"]) if m["platform"] in _PLATFORM_ORDER else 99
@@ -671,11 +685,12 @@ def release_context(chosen, window_days=14):
     metas.sort(key=sort_key)
     platforms = [p for p in _PLATFORM_ORDER if any(m["platform"] == p for m in metas)]
 
-    # Default to the soonest upcoming release (else the soonest dated one).
+    # Default to the soonest upcoming release — never a shipped one.
     if not chosen and metas:
-        dated = [m for m in metas if m["days"] is not None]
+        active = [m for m in metas if not m["shipped"]]
+        dated = [m for m in active if m["days"] is not None]
         upcoming = [m for m in dated if m["days"] >= 0]
-        pool = upcoming or dated or metas
+        pool = upcoming or dated or active or metas
         chosen = min(pool, key=lambda m: m["days"] if m["days"] is not None else 10**9)["name"]
 
     selected = next((m for m in metas if m["name"] == chosen), None)
