@@ -18,6 +18,7 @@ from statistics import mean, median
 
 import analytics as A
 import config as cfg
+from dev_reports import _adf_text
 
 JIRA_BASE = None  # set by jira_client import below to build URLs
 try:
@@ -46,6 +47,7 @@ class Issue:
     timeline: A.Timeline
     events: list  # (ts, author, from_status, to_status)
     duedate: dt.date | None = None
+    description: str = ""
 
     @property
     def url(self):
@@ -91,6 +93,7 @@ def load_issues(raw_list) -> list[Issue]:
             timeline=tl,
             events=A.status_events(cl),
             duedate=_parse_date(f.get("duedate")),
+            description=_adf_text(f.get("description")),
         ))
     return issues
 
@@ -386,6 +389,18 @@ RR_GATES = {
     "throughput_window_days": 21,
 }
 
+# The release timeline groups every ticket into one of these 5 categories
+# (id, label, color) instead of the full 11-stage breakdown — ordered earliest
+# to latest through the pipeline. Each entry's ceiling is the furthest
+# _LINEAR_STAGES stage that still belongs to that category.
+_TIMELINE_CATEGORIES = [
+    ("dev", "Development", "#0065ff", cfg.STAGE_DEVELOPMENT),
+    ("qa", "QA", "#ffab00", cfg.STAGE_QA_TESTING),
+    ("staging", "Staging", "#6554c0", cfg.STAGE_PROD_READY),
+    ("production", "Production", "#00875a", cfg.STAGE_PRODUCTION),
+    ("done", "Done", "#36b37e", cfg.STAGE_DONE),
+]
+
 
 def _furthest_index(issue):
     """Highest linear-stage index the ticket has ever reached (from the changelog),
@@ -394,11 +409,6 @@ def _furthest_index(issue):
     if issue.stage in _LIN_IDX:
         idxs.append(_LIN_IDX[issue.stage])
     return max(idxs) if idxs else 0
-
-
-def _age_in_status(issue):
-    d = issue.timeline.days_in_status(issue.status)
-    return round(d) if d is not None else None
 
 
 def release_readiness(version_issues, version_name, release_date=None, now=None,
@@ -442,10 +452,6 @@ def release_readiness(version_issues, version_name, release_date=None, now=None,
     no_release = [i for i in open_issues if not i.has_release]
     not_started = [i for i in open_issues if i.stage == cfg.STAGE_TODO]
     unassigned = [i for i in open_issues if i.assignee == "Unassigned"]
-    # Within a fix version every ticket already carries this release, so the gate is
-    # about due dates only.
-    dr_tickets = [{"key": i.key, "url": i.url, "summary": i.summary, "note": ""}
-                  for i in missing_due]
 
     # --- Ownership: open tickets per assignee ---
     own = {}
@@ -528,29 +534,23 @@ def release_readiness(version_issues, version_name, release_date=None, now=None,
     cap_proj_date = (today + dt.timedelta(days=cap_proj_days)) if cap_proj_days is not None else None
 
     # --- Ship gates -> verdict ---
-    def _tk(i, note=""):
-        return {"key": i.key, "url": i.url, "summary": i.summary, "note": note}
-
-    def g(name, sub, measure, value, status, level="warn", tickets=None):
+    # Per-ticket detail for what's driving each gate now lives in the release
+    # timeline below (grouped by stage), so gates here are aggregate-only.
+    def g(name, sub, measure, value, status, level="warn"):
         return {"name": name, "sub": sub, "measure": measure,
-                "value": value, "status": status, "level": level,
-                "tickets": tickets or []}
+                "value": value, "status": status, "level": level}
 
     gates = [
         g("Open critical bugs", "Priority Highest/Critical, still open",
-          "must be 0 to ship", len(crit), "bad" if crit else "ok", level="block",
-          tickets=[_tk(i) for i in crit]),
+          "must be 0 to ship", len(crit), "bad" if crit else "ok", level="block"),
         g("Open high bugs", "Priority High, still open",
           f"≤ {RR_GATES['high_bugs_max']}", len(high),
-          "warn" if len(high) > RR_GATES["high_bugs_max"] else "ok",
-          tickets=[_tk(i) for i in high]),
+          "warn" if len(high) > RR_GATES["high_bugs_max"] else "ok"),
         g("Blocked tickets", "Genuinely blocked (Blocked / Customer Feedback / Cannot Reproduce)",
-          "0", len(blocked), "warn" if blocked else "ok",
-          tickets=[_tk(i) for i in blocked]),
+          "0", len(blocked), "warn" if blocked else "ok"),
         g("QA bounce rate", "Returned from QA ÷ reached QA",
           f"< {round(RR_GATES['bounce_rate_max']*100)}%", f"{round(bounce_rate*100)}%",
-          "warn" if bounce_rate >= RR_GATES["bounce_rate_max"] else "ok",
-          tickets=[_tk(i) for i in bounced_list]),
+          "warn" if bounce_rate >= RR_GATES["bounce_rate_max"] else "ok"),
     ]
     if schedule["status"] == "na":
         gates.append(g("Schedule — pace vs capacity",
@@ -566,7 +566,7 @@ def release_readiness(version_issues, version_name, release_date=None, now=None,
     gates.append(g("Due date set",
                    "Team policy: every open ticket needs a due date until resolved/done",
                    "0 missing", len(missing_due),
-                   "bad" if missing_due else "ok", tickets=dr_tickets))
+                   "bad" if missing_due else "ok"))
 
     if any(x["status"] == "bad" and x["level"] == "block" for x in gates):
         verdict = "NO-GO"
@@ -607,18 +607,72 @@ def release_readiness(version_issues, version_name, release_date=None, now=None,
                 if (ts := i.timeline.stage_first_entry.get(cfg.STAGE_READY_FOR_QA)) and ts <= day_end)
         burnup.append({"days_ago": day, "count": c})
 
-    # --- Must-clear list: open criticals/highs, blocked, and paused, oldest first.
-    #     Paused (dev paused for the day) is tagged distinctly from truly Blocked. ---
-    def _row(i, tag, cls, kind):
-        return {"key": i.key, "url": i.url, "summary": i.summary, "status": i.status,
-                "tag": tag, "cls": cls, "kind": kind, "age": _age_in_status(i)}
-    must_clear = ([_row(i, "Critical", "bad", "bug") for i in crit]
-                  + [_row(i, "High", "warn", "bug") for i in high]
-                  + [_row(i, "Blocked", "bad", "blocked") for i in blocked]
-                  + [_row(i, "Paused", "paused", "paused") for i in paused])
-    # bugs/blocked first (kind order), then oldest first within each
-    _korder = {"bug": 0, "blocked": 1, "paused": 2}
-    must_clear.sort(key=lambda r: (_korder[r["kind"]], -(r["age"] or 0)))
+    # --- Release timeline: every ticket grouped into 5 categories (dev / qa /
+    #     staging / production / done), each carrying the same warnings/errors
+    #     the gates use, so the two views can never disagree. ---
+    crit_keys = {i.key for i in crit}
+    high_keys = {i.key for i in high}
+    blocked_keys = {i.key for i in blocked}
+    paused_keys = {i.key for i in paused}
+    missing_due_keys = {i.key for i in missing_due}
+    bounced_keys = {i.key for i in bounced_list}
+
+    def _ticket_flags(i):
+        flags = []
+        if i.key in crit_keys:
+            flags.append({"label": "Critical bug", "cls": "bad"})
+        if i.key in high_keys:
+            flags.append({"label": "High-priority bug", "cls": "warn"})
+        if i.key in blocked_keys:
+            flags.append({"label": "Blocked", "cls": "bad"})
+        if i.key in paused_keys:
+            flags.append({"label": "Paused for the day", "cls": "paused"})
+        if i.key in bounced_keys:
+            flags.append({"label": "Returned from QA", "cls": "warn"})
+        if i.key in missing_due_keys:
+            flags.append({"label": "No due date", "cls": "warn"})
+        if i.assignee == "Unassigned":
+            flags.append({"label": "Unassigned", "cls": "warn"})
+        return flags
+
+    def _timeline_category(i):
+        # Reopened work is, by definition, back in active development —
+        # regardless of how far it previously got.
+        if i.stage == cfg.STAGE_REOPENED:
+            return "dev"
+        # A paused/blocked ticket can't be "done" — cap at Production so a
+        # ticket that once passed through Done (then got reopened and paused
+        # again) doesn't get parked in the Done bucket.
+        if i.stage == cfg.STAGE_PAUSED:
+            idx = min(_furthest_index(i), _LIN_IDX[cfg.STAGE_PRODUCTION])
+        else:
+            idx = _LIN_IDX.get(i.stage, 0)
+        for cat_id, _label, _color, ceiling in _TIMELINE_CATEGORIES:
+            if idx <= _LIN_IDX[ceiling]:
+                return cat_id
+        return "done"
+
+    by_cat = {}
+    for i in issues:
+        by_cat.setdefault(_timeline_category(i), []).append(i)
+
+    timeline = []
+    for cat_id, label, color, _ceiling in _TIMELINE_CATEGORIES:
+        group = by_cat.get(cat_id, [])
+        if not group:
+            continue
+        group = sorted(group, key=lambda i: i.key)
+        timeline.append({
+            "id": cat_id,
+            "label": label,
+            "color": color,
+            "count": len(group),
+            "tickets": [{
+                "key": i.key, "url": i.url, "summary": i.summary,
+                "description": i.description, "assignee": i.assignee,
+                "flags": _ticket_flags(i),
+            } for i in group],
+        })
 
     return {
         "version": version_name, "release_date": release_date,
@@ -637,7 +691,8 @@ def release_readiness(version_issues, version_name, release_date=None, now=None,
         "bounce_rate": round(bounce_rate * 100),
         "not_started": len(not_started), "missing_due": len(missing_due),
         "no_release": len(no_release), "unassigned": len(unassigned),
-        "gates": gates, "ownership": ownership, "must_clear": must_clear[:12],
+        "gates": gates, "ownership": ownership,
+        "timeline": timeline,
         "burnup": burnup, "window_days": window_days,
         # legacy keys kept so older callers/tests keep working
         "done": counts["done"], "completion_pct": pct(counts["done"]),

@@ -520,7 +520,9 @@ def fetch_issues_for_version(version_name: str) -> list[dict]:
     jql = f'project in ({projects}) AND fixVersion = "{version_name}"'
     # Changelog is required so Release Readiness can compute how far each ticket
     # has progressed (furthest stage reached), throughput, and QA bounce.
-    return search_issues(jql, REPORT_FIELDS, expand_changelog=True)
+    # description is fetched here only (not the shared REPORT_FIELDS) so the
+    # broader executive-report pulls don't carry the extra payload.
+    return search_issues(jql, REPORT_FIELDS + ["description"], expand_changelog=True)
 
 
 @_cached

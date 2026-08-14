@@ -379,24 +379,39 @@ REL = """
 .rrw .otrack{height:9px;background:#eef1ef;border-radius:999px;overflow:hidden}
 .rrw .otrack>span{display:block;height:100%;background:#1fa963;border-radius:999px}
 .rrw .orow .on{text-align:right;color:#6b756e;font-weight:600}
-.rrw table.mc{width:100%;border-collapse:collapse;font-size:12.5px;box-shadow:none;background:transparent}
-.rrw table.mc th,.rrw table.mc td{text-align:left;padding:8px 10px;border-bottom:1px solid #eef1ef;background:transparent}
-.rrw table.mc th{font-size:11px;color:#6b756e;text-transform:uppercase;letter-spacing:.03em}
 .rrw .tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;background:#eef1ef;color:#3a453e}
 .rrw .tag.bad{background:#fbeaea;color:#a82f2f}.rrw .tag.warn{background:#fdf3e3;color:#8a5a14}
 .rrw .tag.paused{background:#eef4fb;color:#3b6ea5}
 .rrw .age{color:#a82f2f;font-weight:600}
-.rrw .rr-fg{border-top:1px solid #eef1ef;padding:12px 0}
-.rrw .rr-fg:first-of-type{border-top:none;padding-top:2px}
-.rrw .rr-fg-h{display:flex;align-items:center;gap:9px;font-size:13px;margin-bottom:7px}
-.rrw .rr-fg-h .muted{margin-left:auto;font-size:11.5px;color:#98a099}
-.rrw .rr-tickets{display:flex;flex-direction:column;gap:2px}
-.rrw .rr-tk{display:flex;align-items:baseline;gap:10px;padding:5px 8px;border-radius:6px;text-decoration:none;font-size:12.5px}
-.rrw .rr-tk:hover{background:#eef1ef}
-.rrw .rr-tk .k{font-weight:700;color:#17864e;flex:none}
-.rrw .rr-tk .s{color:#3a453e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rrw .rr-tk .n{margin-left:auto;color:#a82f2f;font-size:11px;font-weight:600;flex:none;white-space:nowrap}
 .rrw .rr-muted{color:#6b756e;font-size:12.5px;padding:20px 0}
+.rrw .tl-groups{display:flex;flex-direction:column;gap:8px}
+.rrw .tl-grp{border:1px solid #e4e7e5;border-radius:10px;overflow:hidden}
+.rrw .tl-head{display:flex;align-items:center;gap:11px;width:100%;background:#fff;border:none;padding:12px 14px;cursor:pointer;font:inherit;text-align:left}
+.rrw .tl-head:hover{background:#fafbfa}
+.rrw .tl-head.open{background:#f5f8f6}
+.rrw .tl-dot{width:10px;height:10px;border-radius:50%;flex:none}
+.rrw .tl-label{font-size:13.5px;font-weight:700;color:#1c2620}
+.rrw .tl-count{font-size:12px;font-weight:700;color:#6b756e;background:#eef1ef;border-radius:999px;padding:2px 9px}
+.rrw .tl-chev{margin-left:auto;color:#98a099;font-size:11px;transition:transform .15s}
+.rrw .tl-body{display:none;padding:4px 14px 12px;border-top:1px solid #eef1ef}
+.rrw .tl-tk{padding:9px 4px;border-bottom:1px solid #f2f4f3;border-radius:6px;cursor:pointer}
+.rrw .tl-tk:last-child{border-bottom:none}
+.rrw .tl-tk:hover{background:#fafbfa}
+.rrw .tl-tk:focus-visible{outline:2px solid #1fa963;outline-offset:2px}
+.rrw .tl-tk-top{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.rrw .tl-tk-key{font-weight:700;color:#17864e;text-decoration:none;flex:none}
+.rrw .tl-tk-sum{color:#1c2620;font-size:13px;flex:1;min-width:160px}
+.rrw .tl-tk-as{margin-left:auto;color:#6b756e;font-size:12px;white-space:nowrap}
+.rrw .tl-tk-hist{background:#fff;border:1px solid #e4e7e5;color:#3a453e;font-size:11px;font-weight:600;padding:4px 9px;border-radius:999px;cursor:pointer;flex:none;white-space:nowrap}
+.rrw .tl-tk-hist:hover{background:#eef6f0;border-color:#1fa963;color:#17864e}
+.rrw .tl-tk-desc{color:#6b756e;font-size:12px;margin-top:4px;line-height:1.4}
+.rrw .tl-tk-flags{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.rrw .th-modal{display:none;position:fixed;inset:0;z-index:200;background:rgba(23,30,26,.45);align-items:center;justify-content:center;padding:24px}
+.rrw .th-modal.open{display:flex}
+.rrw .th-modal-card{background:#fff;border-radius:14px;max-width:720px;width:100%;max-height:85vh;overflow-y:auto;padding:26px 28px;box-shadow:0 20px 60px rgba(9,30,20,.28);position:relative}
+.rrw .th-modal-close{position:absolute;top:14px;right:16px;background:none;border:none;font-size:22px;line-height:1;color:#98a099;cursor:pointer;padding:4px}
+.rrw .th-modal-close:hover{color:#3a453e}
+.rrw .th-modal-loading{color:#6b756e;font-size:13px;padding:40px 0;text-align:center}
 @media (max-width:820px){.rrw .tiles{grid-template-columns:repeat(2,1fr)}.rrw .grid2{grid-template-columns:1fr}.rrw .verdict{grid-template-columns:1fr}.rrw .countdown{border-left:none;padding-left:0;text-align:left}}
 </style>
 <div class="rrw">
@@ -557,50 +572,81 @@ REL = """
   </div>
 </div>
 
-<div class="grid2">
-  <div class="panel">
-    <h2>Open work by owner</h2>
-    <div class="hint">Remaining open tickets per developer — where the release is bottlenecked.</div>
-    <div class="own">
-    {% set omax = d.ownership[0].count if d.ownership else 1 %}
-    {% for o in d.ownership %}
-      <div class="orow"><span class="nm">{{ o.name }}</span>
-        <div class="otrack"><span style="width:{{ (100*o.count/omax)|round(0,'floor') }}%"></span></div>
-        <span class="on">{{ o.count }}</span></div>
-    {% else %}<div class="rr-muted">No open work. 🎉</div>{% endfor %}
-    </div>
-  </div>
-  <div class="panel">
-    <h2>Must-clear before ship</h2>
-    <div class="hint">Open bugs, blocked, and paused work — oldest first. <b>Paused</b> = a developer paused for the day, not a blocker.</div>
-    <table class="mc"><tr><th>Key</th><th>Summary</th><th>Type</th><th>Age</th></tr>
-    {% for r in d.must_clear %}
-      <tr><td><a href="{{ r.url }}" target="_blank">{{ r.key }}</a></td><td>{{ r.summary|truncate(48) }}</td>
-      <td><span class="tag {{ r.cls }}" title="{{ r.status }}">{{ r.tag }}</span></td>
-      <td class="{{ 'age' if r.age and r.age>=5 else '' }}">{{ fmt(r.age) }}</td></tr>
-    {% else %}<tr><td colspan="4" class="rr-muted">Nothing blocking. 🎉</td></tr>{% endfor %}
-    </table>
+<div class="panel" style="margin-bottom:18px">
+  <h2>Open work by owner</h2>
+  <div class="hint">Remaining open tickets per developer — where the release is bottlenecked.</div>
+  <div class="own">
+  {% set omax = d.ownership[0].count if d.ownership else 1 %}
+  {% for o in d.ownership %}
+    <div class="orow"><span class="nm">{{ o.name }}</span>
+      <div class="otrack"><span style="width:{{ (100*o.count/omax)|round(0,'floor') }}%"></span></div>
+      <span class="on">{{ o.count }}</span></div>
+  {% else %}<div class="rr-muted">No open work. 🎉</div>{% endfor %}
   </div>
 </div>
 
-{% set ns = namespace(any=false) %}
-{% for g in d.gates %}{% if g.tickets and g.status in ['warn','bad'] %}{% set ns.any = true %}{% endif %}{% endfor %}
-{% if ns.any %}
 <div class="panel">
-  <h2>What's flagged — the tickets behind each gate</h2>
-  <div class="hint">Every gate above that isn't passing, with the specific tickets. Click a key to open it in Jira.</div>
-  {% for g in d.gates %}{% if g.tickets and g.status in ['warn','bad'] %}
-  <div class="rr-fg">
-    <div class="rr-fg-h"><span class="chip {{ g.status }}">{{ {'warn':'OVER','bad':'FAIL'}[g.status] }}</span><b>{{ g.name }}</b><span class="muted">{{ g.tickets|length }} ticket{{ 's' if g.tickets|length != 1 else '' }}</span></div>
-    <div class="rr-tickets">
-      {% for t in g.tickets %}
-      <a href="{{ t.url }}" target="_blank" class="rr-tk"><span class="k">{{ t.key }}</span><span class="s">{{ t.summary|truncate(60) }}</span>{% if t.note %}<span class="n">{{ t.note }}</span>{% endif %}</a>
-      {% endfor %}
+  <h2>Release timeline</h2>
+  <div class="hint">Every ticket in this release, grouped by where it currently sits in the pipeline. Click a stage to see its tickets, assignees, and any warnings or errors.</div>
+  <div class="tl-groups">
+  {% for g in d.timeline %}
+    <div class="tl-grp">
+      <button type="button" class="tl-head" id="tlhead-{{ g.id }}" onclick="tlToggle('{{ g.id }}')">
+        <span class="tl-dot" style="background:{{ g.color }}"></span>
+        <span class="tl-label">{{ g.label }}</span>
+        <span class="tl-count">{{ g.count }}</span>
+        <span class="tl-chev" id="tlchev-{{ g.id }}">&#9660;</span>
+      </button>
+      <div class="tl-body" id="tlbody-{{ g.id }}">
+        {% for t in g.tickets %}
+        <div class="tl-tk" onclick="thOpen('{{ t.key }}')" role="button" tabindex="0" onkeydown="if(event.key==='Enter')thOpen('{{ t.key }}')">
+          <div class="tl-tk-top">
+            <a href="{{ t.url }}" target="_blank" class="tl-tk-key" onclick="event.stopPropagation()">{{ t.key }}</a>
+            <span class="tl-tk-sum">{{ t.summary }}</span>
+            <span class="tl-tk-as">{{ t.assignee }}</span>
+            <button type="button" class="tl-tk-hist" onclick="event.stopPropagation();thOpen('{{ t.key }}')" title="View full history">History</button>
+          </div>
+          {% if t.description %}<div class="tl-tk-desc">{{ t.description|truncate(180) }}</div>{% endif %}
+          {% if t.flags %}<div class="tl-tk-flags">{% for f in t.flags %}<span class="tag {{ f.cls }}">{{ f.label }}</span>{% endfor %}</div>{% endif %}
+        </div>
+        {% endfor %}
+      </div>
     </div>
+  {% else %}
+    <div class="rr-muted">No tickets in this release.</div>
+  {% endfor %}
   </div>
-  {% endif %}{% endfor %}
 </div>
-{% endif %}
+<div id="thModal" class="th-modal" onclick="if(event.target===this)thClose()">
+  <div class="th-modal-card">
+    <button type="button" class="th-modal-close" onclick="thClose()" aria-label="Close">&times;</button>
+    <div id="thModalBody" class="th-modal-body"><div class="th-modal-loading">Loading history…</div></div>
+  </div>
+</div>
+<script>
+function tlToggle(id){
+  var b=document.getElementById('tlbody-'+id), c=document.getElementById('tlchev-'+id), h=document.getElementById('tlhead-'+id);
+  var open=h.classList.contains('open');
+  h.classList.toggle('open', !open);
+  c.style.transform = open ? '' : 'rotate(180deg)';
+  b.style.display = open ? 'none' : 'block';
+}
+function thOpen(key){
+  var m=document.getElementById('thModal'), b=document.getElementById('thModalBody');
+  b.innerHTML='<div class="th-modal-loading">Loading history…</div>';
+  m.classList.add('open');
+  document.body.style.overflow='hidden';
+  fetch('/api/v2/ticket-history/'+encodeURIComponent(key))
+    .then(function(r){return r.text().then(function(t){return {ok:r.ok, t:t};});})
+    .then(function(res){ b.innerHTML = res.t; })
+    .catch(function(){ b.innerHTML='<div class="th-error">Could not load history for '+key+'.</div>'; });
+}
+function thClose(){
+  document.getElementById('thModal').classList.remove('open');
+  document.body.style.overflow='';
+}
+document.addEventListener('keydown', function(e){ if(e.key==='Escape') thClose(); });
+</script>
 {% endif %}
 </div>
 """

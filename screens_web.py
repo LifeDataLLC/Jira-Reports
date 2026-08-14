@@ -1064,14 +1064,21 @@ INVEST_TMPL = """
 
 _EVENT_ICON = {"status": "⇄", "assignee": "👤", "comment": "💬", "worklog": "⏱",
                "duedate": "📅", "startdate": "📅", "flag": "🚩", "sprint": "🏁"}
+_EVENT_COLOR = {"status": "#0065ff", "assignee": "#00b8d9", "comment": "#6b778c",
+                "worklog": "#6554c0", "duedate": "#ffab00", "startdate": "#ffab00",
+                "flag": "#de350b", "sprint": "#36b37e"}
 
 
-@v3.route("/investigate")
-def investigate_screen():
-    key = (request.args.get("key") or "").strip().upper()
+def _ticket_timeline_data(key, start=None, end=None):
+    """One ticket's full forensic timeline: events (status/assignee/comments/
+    worklogs/field changes) with inactivity-gap markers, plus a lifetime
+    stage-time ribbon. Shared by the standalone Investigator page and the
+    Release timeline's per-ticket history popup, so they can never disagree.
+    Returns (issue, timeline, ribbon) — issue is None if the key isn't found.
+    """
+    key = (key or "").strip().upper()
     if not key:
-        return page(INVEST_TMPL, active="/investigate", issue=None, err=None)
-    _p, _d, start, end = parse_filters()
+        return None, None, None
     issue = next((i for i in _issues(None) if i.key.upper() == key), None)
     if issue is None:
         try:
@@ -1081,8 +1088,7 @@ def investigate_screen():
         if raw:
             issue = dr.load_dev_issues([raw], jc.detect_custom_fields())[0]
     if issue is None:
-        return page(INVEST_TMPL, active="/investigate", issue=None,
-                    err=f"Issue {key} not found (or Jira unreachable). Check the key.")
+        return None, None, None
     events = [e for e in activity.events_for(issue)
               if (not start or e.ts >= start) and (not end or e.ts < end)]
     gap_days = st.load()["gap_days"]
@@ -1093,7 +1099,7 @@ def investigate_screen():
             if gap >= gap_days:
                 timeline.append({"gap": round(gap)})
         timeline.append({"e": e, "icon": _EVENT_ICON.get(e.kind, "•"),
-                         "color": "#0065ff" if e.kind == "status" else "#c1c7d0", "gap": None})
+                         "color": _EVENT_COLOR.get(e.kind, "#8993a4"), "gap": None})
         prev = e.ts
     # Stage ribbon (FR-T3): lifetime seconds per bucket from the status timeline.
     per_bucket = {}
@@ -1105,8 +1111,116 @@ def investigate_screen():
                "pct": round(100 * secs / total, 1),
                "color": BUCKET_COLORS.get(b if b != "unmapped" else None)}
               for b, secs in sorted(per_bucket.items(), key=lambda kv: -kv[1]) if secs > 0]
+    return issue, timeline, ribbon
+
+
+@v3.route("/investigate")
+def investigate_screen():
+    key = (request.args.get("key") or "").strip().upper()
+    if not key:
+        return page(INVEST_TMPL, active="/investigate", issue=None, err=None)
+    _p, _d, start, end = parse_filters()
+    issue, timeline, ribbon = _ticket_timeline_data(key, start, end)
+    if issue is None:
+        return page(INVEST_TMPL, active="/investigate", issue=None,
+                    err=f"Issue {key} not found (or Jira unreachable). Check the key.")
     return page(INVEST_TMPL, active="/investigate", issue=issue, err=None,
                 timeline=timeline, ribbon=ribbon)
+
+
+# ---------------------------------------------------------------------------
+# Ticket history fragment — a compact, self-styled timeline used by the
+# Release timeline's "History" popup (and reusable anywhere else that wants
+# a lightweight per-ticket history view without the full Investigator chrome).
+# ---------------------------------------------------------------------------
+
+HISTORY_FRAGMENT_TMPL = """
+<style>
+ .th-frag{font-family:inherit}
+ .th-head{display:flex;flex-direction:column;gap:6px;padding-bottom:14px;margin-bottom:14px;border-bottom:1px solid #eef1ef}
+ .th-top{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+ .th-key a{font-size:15px;font-weight:800;color:#17864e;text-decoration:none}
+ .th-key a:hover{text-decoration:underline}
+ .th-badges{display:flex;gap:6px}
+ .th-badge{font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;background:#eef1ef;color:#3a453e}
+ .th-badge.status{background:#e6f0ff;color:#0052cc}
+ .th-summary{font-size:14px;color:#1c2620;font-weight:600;line-height:1.4}
+ .th-meta{display:flex;gap:14px;font-size:12.5px;color:#6b756e}
+ .th-ribbon{display:flex;height:20px;border-radius:6px;overflow:hidden;margin-top:2px}
+ .th-ribbon-seg{display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;overflow:hidden;white-space:nowrap;text-shadow:0 1px 1px rgba(0,0,0,.3)}
+ .th-ribbon-legend{display:flex;flex-wrap:wrap;gap:12px;font-size:11.5px;color:#6b756e;margin-top:6px}
+ .th-ribbon-legend span{display:inline-flex;align-items:center;gap:5px}
+ .th-dot{width:8px;height:8px;border-radius:50%;flex:none;display:inline-block}
+ .th-timeline{position:relative;margin-top:18px;padding-left:26px}
+ .th-timeline::before{content:"";position:absolute;left:9px;top:6px;bottom:6px;width:2px;background:#e4e7e5}
+ .th-node{position:relative;padding:4px 0 16px;font-size:12.5px;font-weight:700;color:#3a453e}
+ .th-node-dot{position:absolute;left:-26px;top:5px;width:14px;height:14px;border-radius:50%;background:#98a099;border:3px solid #fff;box-shadow:0 0 0 1.5px #98a099}
+ .th-node-dot.current{background:#1fa963;box-shadow:0 0 0 1.5px #1fa963}
+ .th-gap{position:relative;margin:6px 0 14px;padding:7px 12px;background:#fff8ea;border:1px dashed #e8b84b;border-radius:8px;display:inline-block;color:#8a5a14;font-size:12px;font-weight:600}
+ .th-event{position:relative;padding-bottom:16px}
+ .th-event-dot{position:absolute;left:-26px;top:1px;width:14px;height:14px;border-radius:50%;font-size:8px;display:flex;align-items:center;justify-content:center;color:#fff;border:2px solid #fff;box-shadow:0 0 0 1px #e4e7e5}
+ .th-event-top{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;font-size:12.5px}
+ .th-event-top b{color:#1c2620;font-weight:700}
+ .th-event-kind{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#98a099}
+ .th-event-ts{margin-left:auto;color:#98a099;font-size:11.5px;white-space:nowrap}
+ .th-event-detail{margin-top:3px;font-size:12.5px;color:#3a453e;line-height:1.4}
+ .th-arrow{color:#98a099;margin:0 2px}
+ .th-empty{color:#6b756e;font-size:12.5px;padding:12px 0}
+ .th-error{color:#a82f2f;font-size:13px;padding:20px 0;text-align:center}
+</style>
+<div class="th-frag">
+  <div class="th-head">
+    <div class="th-top">
+      <div class="th-key"><a href="{{ issue.url }}" target="_blank">{{ issue.key }}</a></div>
+      <div class="th-badges"><span class="th-badge">{{ issue.type }}</span><span class="th-badge status">{{ issue.status }}</span></div>
+    </div>
+    <div class="th-summary">{{ issue.summary }}</div>
+    <div class="th-meta">
+      <span>👤 {{ issue.assignee }}</span>
+      {% if issue.created %}<span>Created {{ issue.created.strftime('%b %-d, %Y') }}</span>{% endif %}
+    </div>
+    {% if ribbon %}
+    <div class="th-ribbon">
+      {% for seg in ribbon %}<div class="th-ribbon-seg" style="width:{{ seg.pct }}%;background:{{ seg.color }}" title="{{ seg.label }}: {{ seg.days }}d ({{ seg.pct }}%)">{% if seg.pct >= 12 %}{{ seg.label }}{% endif %}</div>{% endfor %}
+    </div>
+    <div class="th-ribbon-legend">{% for seg in ribbon %}<span><span class="th-dot" style="background:{{ seg.color }}"></span>{{ seg.label }} · {{ seg.days }}d</span>{% endfor %}</div>
+    {% endif %}
+  </div>
+  <div class="th-timeline">
+    <div class="th-node"><span class="th-node-dot"></span>Created{% if issue.created %} · {{ issue.created.strftime('%b %-d, %Y · %H:%M') }}{% endif %}</div>
+    {% for item in timeline %}
+      {% if item.gap %}
+      <div class="th-gap">⏸ {{ item.gap }} days of inactivity</div>
+      {% else %}
+      <div class="th-event">
+        <span class="th-event-dot" style="background:{{ item.color }}">{{ item.icon }}</span>
+        <div class="th-event-top"><b>{{ item.e.actor }}</b><span class="th-event-kind">{{ item.e.kind }}</span><span class="th-event-ts">{{ item.e.ts.strftime('%b %-d, %Y · %H:%M') }}</span></div>
+        {% if item.e.kind in ('status','assignee','duedate','startdate','flag','sprint') %}
+          <div class="th-event-detail">{{ item.e.frm or '—' }} <span class="th-arrow">→</span> {{ item.e.to or '—' }}</div>
+        {% elif item.e.kind == 'worklog' %}
+          <div class="th-event-detail"><span class="th-badge">{{ (item.e.seconds/3600)|round(1) }}h logged</span> {{ item.e.detail[:160] }}</div>
+        {% else %}
+          <div class="th-event-detail">{{ item.e.detail[:400] }}</div>
+        {% endif %}
+      </div>
+      {% endif %}
+    {% else %}
+      <div class="th-empty">No recorded activity yet.</div>
+    {% endfor %}
+    <div class="th-node"><span class="th-node-dot current"></span>Now · {{ issue.status }}</div>
+  </div>
+</div>
+"""
+
+HISTORY_FRAGMENT_ERR = """<div class="th-error">Issue {{ key }} not found (or Jira unreachable).</div>"""
+
+
+@v3.route("/api/v2/ticket-history/<key>")
+def ticket_history_fragment(key):
+    issue, timeline, ribbon = _ticket_timeline_data(key)
+    if issue is None:
+        return render_template_string(HISTORY_FRAGMENT_ERR, key=(key or "").strip().upper()), 404
+    return render_template_string(HISTORY_FRAGMENT_TMPL, issue=issue, timeline=timeline, ribbon=ribbon)
 
 
 # ---------------------------------------------------------------------------
