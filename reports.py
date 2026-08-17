@@ -445,6 +445,7 @@ def release_readiness(version_issues, version_name, release_date=None, now=None,
     blocked = [i for i in issues if i.is_open and i.status in cfg.BLOCKED_STATUSES]
     paused = [i for i in issues if i.is_open and i.stage in cfg.BLOCKED_STAGES
               and i.status not in cfg.BLOCKED_STATUSES]
+    reopened = [i for i in issues if i.is_open and i.stage == cfg.STAGE_REOPENED]
 
     # --- Coverage gaps (open tickets only) ---
     open_issues = [i for i in issues if i.is_open]
@@ -541,11 +542,6 @@ def release_readiness(version_issues, version_name, release_date=None, now=None,
                 "value": value, "status": status, "level": level}
 
     gates = [
-        g("Open critical bugs", "Priority Highest/Critical, still open",
-          "must be 0 to ship", len(crit), "bad" if crit else "ok", level="block"),
-        g("Open high bugs", "Priority High, still open",
-          f"≤ {RR_GATES['high_bugs_max']}", len(high),
-          "warn" if len(high) > RR_GATES["high_bugs_max"] else "ok"),
         g("Blocked tickets", "Genuinely blocked (Blocked / Customer Feedback / Cannot Reproduce)",
           "0", len(blocked), "warn" if blocked else "ok"),
         g("QA bounce rate", "Returned from QA ÷ reached QA",
@@ -687,7 +683,8 @@ def release_readiness(version_issues, version_name, release_date=None, now=None,
         "cap_proj_days": cap_proj_days, "cap_proj_date": cap_proj_date,
         "work_state": work_state, "schedule": schedule,
         "open_critical": len(crit), "open_high": len(high), "blocked": len(blocked),
-        "paused": len(paused),
+        "paused": len(paused), "reopened": len(reopened),
+        "blocked_or_reopened": len(blocked) + len(reopened),
         "bounce_rate": round(bounce_rate * 100),
         "not_started": len(not_started), "missing_due": len(missing_due),
         "no_release": len(no_release), "unassigned": len(unassigned),

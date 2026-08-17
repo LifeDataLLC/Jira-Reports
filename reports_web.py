@@ -549,7 +549,7 @@ REL = """
     <div class="gaps">
       <div class="k"><span>Missing due date</span><b style="color:#a82f2f">{{ d.missing_due }}</b></div>
       <div class="k"><span>Not started (To Do)</span><b style="color:#8a5a14">{{ d.not_started }}</b></div>
-      <div class="k"><span>Paused (for the day)</span><b>{{ d.paused }}</b></div>
+      <div class="k"><span>Blocked or reopened</span><b style="color:#a82f2f">{{ d.blocked_or_reopened }}</b></div>
       <div class="k"><span>Unassigned</span><b>{{ d.unassigned }}</b></div>
     </div>
   </div>
