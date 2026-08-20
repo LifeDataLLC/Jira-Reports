@@ -355,6 +355,14 @@ REL = """
 .rrw .ptrack>span{display:block;height:100%;border-radius:999px}
 .rrw .pnum{text-align:right;font-weight:800;font-size:14px;color:#1c2620}
 .rrw .pnote{text-align:right;font-size:11px;color:#98a099}
+/* Core stages render even when empty so the flow reads end to end; dim them so
+   an empty stage reads as empty at a glance. */
+.rrw .prow.zero .pdot{background:#dfe3e0 !important}
+.rrw .prow.zero .plabel{color:#98a099;font-weight:500}
+.rrw .prow.zero .pnum{color:#c9cdca}
+.rrw .prow.zero .pnote{color:#c9cdca}
+.rrw .pgaps{border-top:1px solid #eef1ef;margin-top:14px;padding-top:13px}
+.rrw .pgaps-h{font-size:12.5px;font-weight:700;color:#1c2620;margin-bottom:9px}
 /* Narrow panes can't fit the bar without squeezing the status name; drop the
    bar there and keep the numbers, which are the point. */
 @media (max-width:760px){
@@ -511,26 +519,28 @@ REL = """
     {{ burnup_svg|safe }}
   </div>
   <div class="panel">
-    <h2>Coverage gaps</h2>
-    <div class="hint">Hygiene problems that will bite before this ships.</div>
-    <div class="gaps">
-      <div class="k"><span>Missing due date</span><b style="color:#a82f2f">{{ d.missing_due }}</b></div>
-      <div class="k"><span>Not started (To Do)</span><b style="color:#8a5a14">{{ d.not_started }}</b></div>
-      <div class="k"><span>Blocked or reopened</span><b style="color:#a82f2f">{{ d.blocked_or_reopened }}</b></div>
-      <div class="k"><span>Unassigned</span><b>{{ d.unassigned }}</b></div>
+    <h2>Open work by owner</h2>
+    <div class="hint">Remaining open tickets per developer.</div>
+    <div class="own">
+    {% set omax = d.ownership[0].count if d.ownership else 1 %}
+    {% for o in d.ownership %}
+      <div class="orow"><span class="nm">{{ o.name }}</span>
+        <div class="otrack"><span style="width:{{ (100*o.count/omax)|round(0,'floor') }}%"></span></div>
+        <span class="on">{{ o.count }}</span></div>
+    {% else %}<div class="rr-muted">No open work. 🎉</div>{% endfor %}
     </div>
   </div>
 </div>
 
 <div class="panel" style="margin-bottom:18px">
   <h2>Pipeline position</h2>
-  <div class="hint">How many of the {{ d.total }} ticket{{ 's' if d.total != 1 else '' }} sit in each status right now, in workflow order. Every ticket is counted once.</div>
+  <div class="hint">How many of the {{ d.total }} ticket{{ 's' if d.total != 1 else '' }} sit in each status right now, in workflow order. Every ticket is counted once. Blocked, Reopen and the Pause statuses appear only when something is in them.</div>
   <div class="plist">
   {% for p in d.pipeline %}
-    <div class="prow">
+    <div class="prow{{ ' zero' if not p.count }}">
       <span class="pdot" style="background:{{ p.color }}"></span>
       <div class="plabel">{{ p.status }}</div>
-      <div class="ptrack"><span style="width:{{ p.width }}%;background:{{ p.color }}"></span></div>
+      <div class="ptrack">{% if p.count %}<span style="width:{{ p.width }}%;background:{{ p.color }}"></span>{% endif %}</div>
       <div class="pnum">{{ p.count }}</div>
       <div class="pnote">{{ p.pct }}%</div>
     </div>
@@ -538,18 +548,14 @@ REL = """
     <div class="rr-muted">No tickets in this release.</div>
   {% endfor %}
   </div>
-</div>
-
-<div class="panel" style="margin-bottom:18px">
-  <h2>Open work by owner</h2>
-  <div class="hint">Remaining open tickets per developer — where the release is bottlenecked.</div>
-  <div class="own">
-  {% set omax = d.ownership[0].count if d.ownership else 1 %}
-  {% for o in d.ownership %}
-    <div class="orow"><span class="nm">{{ o.name }}</span>
-      <div class="otrack"><span style="width:{{ (100*o.count/omax)|round(0,'floor') }}%"></span></div>
-      <span class="on">{{ o.count }}</span></div>
-  {% else %}<div class="rr-muted">No open work. 🎉</div>{% endfor %}
+  <div class="pgaps">
+    <div class="pgaps-h">Coverage gaps</div>
+    <div class="gaps">
+      <div class="k"><span>Missing due date</span><b style="color:#a82f2f">{{ d.missing_due }}</b></div>
+      <div class="k"><span>Not started (To Do)</span><b style="color:#8a5a14">{{ d.not_started }}</b></div>
+      <div class="k"><span>Blocked or reopened</span><b style="color:#a82f2f">{{ d.blocked_or_reopened }}</b></div>
+      <div class="k"><span>Unassigned</span><b>{{ d.unassigned }}</b></div>
+    </div>
   </div>
 </div>
 

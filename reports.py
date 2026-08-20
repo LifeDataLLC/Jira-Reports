@@ -423,6 +423,22 @@ _PIPELINE_ORDER = [
 ]
 _PIPELINE_RANK = {s: i for i, s in enumerate(_PIPELINE_ORDER)}
 
+# The happy path every release walks. These rows always render, even at zero, so
+# the pipeline reads end to end and an empty stage is visible as empty. Everything
+# else in _PIPELINE_ORDER — Blocked, Reopen, the Pause statuses, and the legacy
+# spellings — is an exception to the flow and only appears when it holds tickets.
+_PIPELINE_CORE = [
+    "To Do",
+    "Development / In Design",
+    "Development Completed",
+    "Ready for QA (QA Env)",
+    "Passed QA (Staging Ready)",
+    "Ready for Staging Verification",
+    "Passed Staging (Prod Ready)",
+    "In Production Testing",
+    "Done",
+]
+
 
 def _furthest_index(issue):
     """Highest linear-stage index the ticket has ever reached (from the changelog),
@@ -635,24 +651,27 @@ def release_readiness(version_issues, version_name, release_date=None, now=None,
     # --- Pipeline position: how many tickets sit in each Jira status right now,
     #     in workflow order, labelled with the team's own status names. Unlike
     #     the cumulative funnel above, each ticket appears in exactly one row and
-    #     the counts sum to `total`. Statuses holding nothing are left out, so
-    #     the rows show where the work actually is. ---
+    #     the counts sum to `total`. The core flow always renders so the pipeline
+    #     reads end to end; exceptions (Blocked, Reopen, Pause…) only appear when
+    #     they actually hold tickets. ---
     by_status = {}
     for i in issues:
         by_status.setdefault(i.status, []).append(i)
+    shown = list(_PIPELINE_CORE) + sorted(
+        (s for s in by_status if s not in _PIPELINE_CORE),
+        key=lambda s: (_PIPELINE_RANK.get(s, len(_PIPELINE_ORDER)), s))
     row_max = max([len(g) for g in by_status.values()] + [1])
-    # Known statuses in workflow order; anything the workflow gained since this
-    # list was written still gets a row (never silently dropped) at the end.
     pipeline = [{
         "status": status,
         "color": cfg.STAGE_COLORS.get(cfg.stage_of(status), "#8993a4"),
-        "count": len(group),
-        "pct": pct(len(group)),
-        "width": round(100 * len(group) / row_max),
+        "count": len(by_status.get(status, [])),
+        "pct": pct(len(by_status.get(status, []))),
+        "width": round(100 * len(by_status.get(status, [])) / row_max),
+        "core": status in _PIPELINE_CORE,
+        # A status the workflow gained since _PIPELINE_ORDER was written still
+        # gets a row rather than vanishing from the counts.
         "known": status in _PIPELINE_RANK,
-    } for status, group in sorted(
-        by_status.items(),
-        key=lambda kv: (_PIPELINE_RANK.get(kv[0], len(_PIPELINE_ORDER)), kv[0]))]
+    } for status in shown]
 
     return {
         "version": version_name, "release_date": release_date,

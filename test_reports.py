@@ -92,14 +92,26 @@ def test_pipeline_position():
     # stage in config.py, and must stay separate rows here.
     assert by["Development Completed"]["count"] == 1
     assert by["Ready for QA (QA Env)"]["count"] == 2
-    # Only statuses that hold tickets appear.
-    assert "In Staging Testing" not in by
-    assert len(d["pipeline"]) == len({s for _k, s, _c in rows})
     # Workflow order, not alphabetical or count order.
     order = [p["status"] for p in d["pipeline"]]
     assert order.index("Development Completed") < order.index("Ready for QA (QA Env)")
     assert order.index("Ready for QA (QA Env)") < order.index("In QA Testing (QA Env)")
     assert order.index("To Do") == 0
+
+    # The core flow always renders so the pipeline reads end to end, while the
+    # exceptions (Blocked / Reopen / Pause…) only show when they hold tickets.
+    assert all(s in by for s in R._PIPELINE_CORE), "core stages always present"
+    assert by["Passed Staging (Prod Ready)"]["count"] == 1
+    assert by["Blocked"]["count"] == 1 and by["Pause QA Testing"]["count"] == 1
+
+    d3 = R.release_readiness(R.load_issues([
+        _issue("PP-S1", "Task", "Medium", "Md Hasan", "Development / In Design",
+               "In Progress", "2026-06-01T09:00:00-0700", None, "R1", [])]),
+        "R1", now=NOW)
+    only = [p["status"] for p in d3["pipeline"]]
+    assert only == R._PIPELINE_CORE, "core only, in order, when nothing else is occupied"
+    assert "Blocked" not in only and "Reopen" not in only
+    assert [p["count"] for p in d3["pipeline"] if p["status"] == "To Do"] == [0]
 
     # A status the workflow gained since _PIPELINE_ORDER was written still gets a
     # row rather than vanishing from the counts.
@@ -107,8 +119,8 @@ def test_pipeline_position():
         _issue("PP-X", "Task", "Medium", "Md Hasan", "Brand New Status",
                "In Progress", "2026-06-01T09:00:00-0700", None, "R1", [])]),
         "R1", now=NOW)
-    assert [p["status"] for p in d2["pipeline"]] == ["Brand New Status"]
-    assert d2["pipeline"][0]["known"] is False
+    new_row = next(p for p in d2["pipeline"] if p["status"] == "Brand New Status")
+    assert new_row["known"] is False and new_row["count"] == 1
     assert sum(p["count"] for p in d2["pipeline"]) == d2["total"] == 1
 
 
