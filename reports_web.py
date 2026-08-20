@@ -328,7 +328,7 @@ REL = """
 .rrw .rsw-legend{display:flex;gap:14px;font-size:11px;color:#6b756e;padding:9px 14px;border-top:1px solid #eef1ef}
 .rrw .rsw-legend span{display:inline-flex;align-items:center;gap:5px}
 .rrw .rsw-empty{padding:16px;text-align:center;color:#6b756e;font-size:12.5px}
-.rrw .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}
+.rrw .tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px}
 .rrw .tile{background:#fff;border:1px solid #e4e7e5;border-radius:12px;padding:15px 17px;box-shadow:0 1px 2px rgba(9,30,20,.05);display:flex;flex-direction:column;gap:8px}
 .rrw .tile .tl{font-size:12px;color:#6b756e;font-weight:600}
 .rrw .tile .val{font-size:26px;font-weight:800;letter-spacing:-.6px;line-height:1}
@@ -488,18 +488,6 @@ REL = """
   <div class="tile"><div class="th"><span class="tl">Development completed</span><span class="chip {{ 'ok' if d.dev_completed_pct>=50 else 'warn' }}">+{{ d.throughput }} / wk</span></div>
     <div class="val">{{ d.dev_completed_pct }}<small>%</small></div><div class="rbar"><span style="width:{{ d.dev_completed_pct }}%"></span></div>
     <div class="meta">{{ d.dev_completed }} of {{ d.total }} reached Development Completed or later</div></div>
-  <div class="tile"><div class="th"><span class="tl">Schedule &middot; pace</span>
-    <span class="chip {{ d.schedule.status }}">{{ {'ok':'on track','warn':'behind','bad':'behind','na':'n/a'}[d.schedule.status] }}</span></div>
-    {% if d.schedule.status=='na' and not d.schedule.capacity %}
-    <div class="val" style="font-size:17px"><a href="/settings">Set pace →</a></div>
-    <div class="meta">expected tickets/wk not set in Settings</div>
-    {% elif d.schedule.required_pace is not none %}
-    <div class="val">{{ '%.1f'|format(d.schedule.required_pace) }}<small>/wk needed</small></div>
-    <div class="meta">team capacity {{ '%g'|format(d.schedule.capacity) }}/wk{% if d.work_state=='not_started' %} · not started yet{% endif %}</div>
-    {% else %}
-    <div class="val" style="font-size:18px">{{ d.schedule.note or 'On track' }}</div>
-    <div class="meta">{% if d.days_to_target is not none %}{{ d.days_to_target }} days to target{% endif %}</div>
-    {% endif %}</div>
   <div class="tile"><div class="th"><span class="tl">Blocked</span></div>
     <div class="val">{{ d.blocked }}</div>
     <div class="meta">Blocked, Customer Feedback or Cannot Reproduce</div></div>
