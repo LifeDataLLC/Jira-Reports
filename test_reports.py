@@ -57,7 +57,63 @@ def test_reports_end_to_end():
     assert ed["risk"]["Critical bugs"] == 1
 
 
+def test_pipeline_position():
+    """The Release page's pipeline view: one row per Jira status, labelled with
+    the team's own status names, every ticket counted exactly once, and the two
+    statuses the stage map collapses ("Development Completed" vs "Ready for QA
+    (QA Env)") kept apart."""
+    rows = [
+        ("PP-01", "To Do", "To Do"),
+        ("PP-02", "Development / In Design", "In Progress"),
+        ("PP-03", "Development Completed", "In Progress"),
+        ("PP-04", "Ready for QA (QA Env)", "To Do"),
+        ("PP-05", "Ready for QA (QA Env)", "To Do"),
+        ("PP-06", "In QA Testing (QA Env)", "In Progress"),
+        ("PP-07", "Passed QA (Staging Ready)", "To Do"),
+        ("PP-08", "Ready for Staging Verification", "To Do"),
+        ("PP-09", "Passed Staging (Prod Ready)", "To Do"),
+        ("PP-10", "In Production Testing", "In Progress"),
+        ("PP-11", "Pause QA Testing", "To Do"),
+        ("PP-12", "Blocked", "In Progress"),
+        ("PP-13", "Done", "Done"),
+    ]
+    issues = R.load_issues([
+        _issue(k, "Task", "Medium", "Md Hasan", s, c,
+               "2026-06-01T09:00:00-0700", None, "R1", []) for k, s, c in rows])
+    d = R.release_readiness(issues, "R1", now=NOW)
+    by = {p["status"]: p for p in d["pipeline"]}
+
+    # Every ticket lands in exactly one row — the property the cumulative funnel
+    # cannot offer, and the reason this view can be trusted.
+    assert sum(p["count"] for p in d["pipeline"]) == d["total"] == len(rows)
+    # Rows are labelled with the real Jira status, not invented wording.
+    assert all(p["status"] in R._PIPELINE_RANK for p in d["pipeline"])
+    # The distinction the whole change exists for: these two collapse into one
+    # stage in config.py, and must stay separate rows here.
+    assert by["Development Completed"]["count"] == 1
+    assert by["Ready for QA (QA Env)"]["count"] == 2
+    # Only statuses that hold tickets appear.
+    assert "In Staging Testing" not in by
+    assert len(d["pipeline"]) == len({s for _k, s, _c in rows})
+    # Workflow order, not alphabetical or count order.
+    order = [p["status"] for p in d["pipeline"]]
+    assert order.index("Development Completed") < order.index("Ready for QA (QA Env)")
+    assert order.index("Ready for QA (QA Env)") < order.index("In QA Testing (QA Env)")
+    assert order.index("To Do") == 0
+
+    # A status the workflow gained since _PIPELINE_ORDER was written still gets a
+    # row rather than vanishing from the counts.
+    d2 = R.release_readiness(R.load_issues([
+        _issue("PP-X", "Task", "Medium", "Md Hasan", "Brand New Status",
+               "In Progress", "2026-06-01T09:00:00-0700", None, "R1", [])]),
+        "R1", now=NOW)
+    assert [p["status"] for p in d2["pipeline"]] == ["Brand New Status"]
+    assert d2["pipeline"][0]["known"] is False
+    assert sum(p["count"] for p in d2["pipeline"]) == d2["total"] == 1
+
+
 if __name__ == "__main__":
     test_analytics_cycle_and_pause()
     test_reports_end_to_end()
+    test_pipeline_position()
     print("All tests passed.")

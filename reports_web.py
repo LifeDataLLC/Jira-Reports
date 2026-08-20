@@ -226,7 +226,7 @@ def _burnup_svg(d):
         parts.append(f'<text x="{L-8}" y="{y+3:.1f}" font-size="9" fill="#98a099" text-anchor="end">{round(total*frac)}</text>')
     # y-axis title (rotated)
     parts.append(f'<text x="20" y="{ymid:.1f}" font-size="10" fill="#6b756e" font-weight="600" '
-                 f'text-anchor="middle" transform="rotate(-90 20 {ymid:.1f})">Tickets dev-complete</text>')
+                 f'text-anchor="middle" transform="rotate(-90 20 {ymid:.1f})">Development Completed</text>')
     # scope line
     parts.append(f'<line x1="{L}" y1="{yp(total):.1f}" x2="{Rt}" y2="{yp(total):.1f}" stroke="#98a099" stroke-dasharray="2 3"/>')
     parts.append(f'<text x="{Rt}" y="{yp(total)-4:.1f}" font-size="9" fill="#98a099" text-anchor="end">scope {total}</text>')
@@ -328,17 +328,6 @@ REL = """
 .rrw .rsw-legend{display:flex;gap:14px;font-size:11px;color:#6b756e;padding:9px 14px;border-top:1px solid #eef1ef}
 .rrw .rsw-legend span{display:inline-flex;align-items:center;gap:5px}
 .rrw .rsw-empty{padding:16px;text-align:center;color:#6b756e;font-size:12.5px}
-.rrw .verdict{display:grid;grid-template-columns:auto 1fr auto;gap:22px;align-items:center;background:#fff;border:1px solid #e4e7e5;border-left:5px solid #b7791f;border-radius:12px;padding:18px 22px;box-shadow:0 1px 2px rgba(9,30,20,.05);margin-bottom:18px}
-.rrw .verdict.go{border-left-color:#1fa963}.rrw .verdict.risk{border-left-color:#b7791f}.rrw .verdict.no{border-left-color:#d64545}
-.rrw .badge{font-size:19px;font-weight:800;padding:6px 14px;border-radius:8px;display:inline-block}
-.rrw .badge.go{background:#e9f6ef;color:#17864e}.rrw .badge.risk{background:#fdf3e3;color:#8a5a14}.rrw .badge.no{background:#fbeaea;color:#a82f2f}
-.rrw .reasons{display:flex;flex-direction:column;gap:6px}
-.rrw .reasons .r{font-size:13px;color:#3a453e;display:flex;gap:8px;align-items:baseline}
-.rrw .rdot{width:7px;height:7px;border-radius:50%;flex:none}
-.rrw .rdot.bad{background:#d64545}.rrw .rdot.warn{background:#b7791f}.rrw .rdot.ok{background:#1fa963}
-.rrw .countdown{text-align:right;padding-left:20px;border-left:1px solid #e4e7e5}
-.rrw .countdown .big{font-size:30px;font-weight:800;line-height:1;letter-spacing:-1px}
-.rrw .countdown .lbl{font-size:11px;color:#6b756e;margin-top:3px}
 .rrw .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}
 .rrw .tile{background:#fff;border:1px solid #e4e7e5;border-radius:12px;padding:15px 17px;box-shadow:0 1px 2px rgba(9,30,20,.05);display:flex;flex-direction:column;gap:8px}
 .rrw .tile .tl{font-size:12px;color:#6b756e;font-weight:600}
@@ -355,24 +344,25 @@ REL = """
 .rrw .panel h2{font-size:14px;margin:0 0 2px;font-weight:700}
 .rrw .panel .hint{font-size:12px;color:#6b756e;margin:0 0 14px}
 .rrw svg{display:block;width:100%;height:auto}
-.rrw .funnel{display:flex;flex-direction:column;gap:11px}
-.rrw .frow{display:grid;grid-template-columns:150px 1fr 54px;gap:12px;align-items:center}
-.rrw .frow .fl{font-size:12.5px;color:#1c2620;font-weight:600}
-.rrw .frow .fl small{display:block;font-weight:400;color:#6b756e;font-size:11px}
-.rrw .ftrack{height:10px;background:#eef1ef;border-radius:999px;overflow:hidden}
-.rrw .ftrack>span{display:block;height:100%;border-radius:999px}
-.rrw .fn{text-align:right;font-weight:800;font-size:14px}
-.rrw .fn small{display:block;font-weight:600;color:#6b756e;font-size:11px}
+.rrw .plist{display:flex;flex-direction:column;gap:3px}
+.rrw .prow{display:grid;grid-template-columns:9px minmax(0,250px) minmax(40px,1fr) 32px 40px;
+  gap:12px;align-items:center;padding:6px;border-radius:7px}
+.rrw .prow:hover{background:#fafbfa}
+.rrw .pdot{width:9px;height:9px;border-radius:50%;flex:none}
+.rrw .plabel{font-size:12.5px;color:#1c2620;font-weight:600;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.rrw .ptrack{height:9px;background:#eef1ef;border-radius:999px;overflow:hidden}
+.rrw .ptrack>span{display:block;height:100%;border-radius:999px}
+.rrw .pnum{text-align:right;font-weight:800;font-size:14px;color:#1c2620}
+.rrw .pnote{text-align:right;font-size:11px;color:#98a099}
+/* Narrow panes can't fit the bar without squeezing the status name; drop the
+   bar there and keep the numbers, which are the point. */
+@media (max-width:760px){
+  .rrw .prow{grid-template-columns:9px 1fr 32px 40px}
+  .rrw .ptrack{display:none}
+}
 .rrw .gaps{display:grid;grid-template-columns:1fr 1fr;gap:6px 18px;font-size:12.5px;margin-top:4px}
 .rrw .gaps .k{display:flex;justify-content:space-between;gap:10px;color:#3a453e}
-.rrw .rubric{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px}
-.rrw .rrow{display:flex;flex-direction:column;gap:9px;background:#fff;border:1px solid #e4e7e5;border-radius:10px;padding:12px 14px;box-shadow:0 1px 2px rgba(9,30,20,.04)}
-.rrw .rrow .name{font-size:13px;font-weight:600;color:#1c2620}
-.rrw .rrow .name small{display:block;font-weight:400;color:#6b756e;font-size:11.5px;margin-top:1px}
-.rrw .rrow .foot{display:flex;justify-content:space-between;align-items:center;gap:12px}
-.rrw .rrow .measure{font-size:11px;color:#98a099}
-.rrw .rrow .st{display:flex;align-items:center;gap:8px}
-.rrw .rrow .st .v{font-size:15px;font-weight:800}
 .rrw .own{display:flex;flex-direction:column;gap:9px}
 .rrw .orow{display:grid;grid-template-columns:120px 1fr 34px;gap:10px;align-items:center;font-size:12.5px}
 .rrw .orow .nm{color:#3a453e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -412,11 +402,11 @@ REL = """
 .rrw .th-modal-close{position:absolute;top:14px;right:16px;background:none;border:none;font-size:22px;line-height:1;color:#98a099;cursor:pointer;padding:4px}
 .rrw .th-modal-close:hover{color:#3a453e}
 .rrw .th-modal-loading{color:#6b756e;font-size:13px;padding:40px 0;text-align:center}
-@media (max-width:820px){.rrw .tiles{grid-template-columns:repeat(2,1fr)}.rrw .grid2{grid-template-columns:1fr}.rrw .verdict{grid-template-columns:1fr}.rrw .countdown{border-left:none;padding-left:0;text-align:left}}
+@media (max-width:820px){.rrw .tiles{grid-template-columns:repeat(2,1fr)}.rrw .grid2{grid-template-columns:1fr}}
 </style>
 <div class="rrw">
 <h1>Release Readiness</h1>
-<div class="sub">Is this release ready to ship, and what's standing in the way?</div>
+<div class="sub">Where the work in this release stands right now.</div>
 {% if not versions_data %}
 <div class="rsw"><span class="rr-muted">No unreleased fix versions found.</span></div>
 {% else %}
@@ -486,24 +476,10 @@ REL = """
 {% endif %}
 
 {% if d %}
-{% set vcls = {'GO':'go','AT RISK':'risk','NO-GO':'no'}[d.verdict] %}
-{% set fcolor = {'dev_completed':'#00b8d9','passed_qa':'#6554c0','passed_staging':'#57d9a3','in_production':'#00875a','done':'#36b37e'} %}
-
-<div class="verdict {{ vcls }}">
-  <div><span class="badge {{ vcls }}">{{ d.verdict }}</span></div>
-  <div class="reasons">
-    {% for lvl,txt in d.reasons %}<div class="r"><span class="rdot {{ lvl }}"></span>{{ txt }}</div>{% endfor %}
-  </div>
-  <div class="countdown">
-    {% if d.days_to_target is not none %}<div class="big">{{ d.days_to_target }}</div><div class="lbl">days to target{% if d.release_date %} · {{ d.release_date.strftime('%b %-d') }}{% endif %}</div>
-    {% else %}<div class="big">—</div><div class="lbl">no target date set</div>{% endif %}
-  </div>
-</div>
-
 <div class="tiles">
   <div class="tile"><div class="th"><span class="tl">Development completed</span><span class="chip {{ 'ok' if d.dev_completed_pct>=50 else 'warn' }}">+{{ d.throughput }} / wk</span></div>
     <div class="val">{{ d.dev_completed_pct }}<small>%</small></div><div class="rbar"><span style="width:{{ d.dev_completed_pct }}%"></span></div>
-    <div class="meta">{{ d.dev_completed }} of {{ d.total }} reached Ready-for-QA+</div></div>
+    <div class="meta">{{ d.dev_completed }} of {{ d.total }} reached Development Completed or later</div></div>
   <div class="tile"><div class="th"><span class="tl">Schedule &middot; pace</span>
     <span class="chip {{ d.schedule.status }}">{{ {'ok':'on track','warn':'behind','bad':'behind','na':'n/a'}[d.schedule.status] }}</span></div>
     {% if d.schedule.status=='na' and not d.schedule.capacity %}
@@ -516,11 +492,11 @@ REL = """
     <div class="val" style="font-size:18px">{{ d.schedule.note or 'On track' }}</div>
     <div class="meta">{% if d.days_to_target is not none %}{{ d.days_to_target }} days to target{% endif %}</div>
     {% endif %}</div>
-  <div class="tile"><div class="th"><span class="tl">Blockers to ship</span><span class="chip {{ 'bad' if (d.open_critical+d.blocked)>0 else 'ok' }}">{{ 'action' if (d.open_critical+d.blocked)>0 else 'clear' }}</span></div>
-    <div class="val">{{ d.open_critical + d.blocked }}</div><div class="meta">{{ d.open_critical }} critical bug{{ 's' if d.open_critical!=1 else '' }} · {{ d.blocked }} blocked{% if d.paused %} · {{ d.paused }} paused (not a blocker){% endif %}</div></div>
+  <div class="tile"><div class="th"><span class="tl">Critical bugs and Blocked</span></div>
+    <div class="val">{{ d.open_critical + d.blocked }}</div><div class="meta">{{ d.open_critical }} critical bug{{ 's' if d.open_critical!=1 else '' }} · {{ d.blocked }} Blocked{% if d.paused %} · {{ d.paused }} in a Pause status{% endif %}</div></div>
   <div class="tile"><div class="th"><span class="tl">Release-ready (passed staging)</span><span class="chip {{ 'ok' if d.passed_staging_pct>=80 else 'warn' }}">{{ d.passed_staging_pct }}%</span></div>
     <div class="val">{{ d.passed_staging }} <small>/ {{ d.total }}</small></div><div class="rbar"><span style="width:{{ d.passed_staging_pct }}%;background:#57d9a3"></span></div>
-    <div class="meta">verified in staging, awaiting cutover</div></div>
+    <div class="meta">reached Passed Staging (Prod Ready) or later</div></div>
 </div>
 
 <div class="grid2">
@@ -531,21 +507,12 @@ REL = """
         {% for w in [7, 14, 30] %}<a href="/release?version={{ chosen|urlencode }}&amp;win={{ w }}" class="{{ 'on' if window_days==w else '' }}">{{ w }}d</a>{% endfor %}
       </div>
     </div>
-    <div class="hint">Tickets reaching development-complete over the last {{ window_days }} days. <b style="color:#0065ff">Blue</b> = pace needed to hit the target; <b style="color:#b7791f">amber</b> = projected finish at your team's pace{% if d.schedule.capacity %} ({{ '%g'|format(d.schedule.capacity) }}/wk){% else %} (set it in Settings){% endif %}.</div>
+    <div class="hint">Tickets reaching Development Completed over the last {{ window_days }} days. <b style="color:#0065ff">Blue</b> = pace needed to hit the target; <b style="color:#b7791f">amber</b> = projected finish at your team's pace{% if d.schedule.capacity %} ({{ '%g'|format(d.schedule.capacity) }}/wk){% else %} (set it in Settings){% endif %}.</div>
     {{ burnup_svg|safe }}
   </div>
   <div class="panel">
-    <h2>Readiness pipeline</h2>
-    <div class="hint">Each milestone counts tickets that reached it <b>or beyond</b>.</div>
-    <div class="funnel">
-    {% for f in d.funnel %}
-      <div class="frow"><div class="fl">{{ f.label }}</div>
-        <div class="ftrack"><span style="width:{{ f.pct }}%;background:{{ fcolor[f.id] }}"></span></div>
-        <div class="fn">{{ f.count }}<small>{{ f.pct }}%</small></div></div>
-    {% endfor %}
-    </div>
-    <div style="height:1px;background:#eef1ef;margin:15px 0"></div>
-    <h2 style="font-size:12.5px;margin-bottom:8px">Coverage gaps</h2>
+    <h2>Coverage gaps</h2>
+    <div class="hint">Hygiene problems that will bite before this ships.</div>
     <div class="gaps">
       <div class="k"><span>Missing due date</span><b style="color:#a82f2f">{{ d.missing_due }}</b></div>
       <div class="k"><span>Not started (To Do)</span><b style="color:#8a5a14">{{ d.not_started }}</b></div>
@@ -556,18 +523,19 @@ REL = """
 </div>
 
 <div class="panel" style="margin-bottom:18px">
-  <h2>Release risk — the checklist behind the verdict</h2>
-  <div class="hint">Each gate has an explicit threshold. The verdict is the worst status across all gates.</div>
-  <div class="rubric">
-  {% for g in d.gates %}
-    <div class="rrow">
-      <div class="name">{{ g.name }}<small>{{ g.sub }}</small></div>
-      <div class="foot">
-        <div class="measure">gate: {{ g.measure }}</div>
-        <div class="st"><span class="v" style="color:{{ '#a82f2f' if g.status=='bad' else ('#8a5a14' if g.status=='warn' else ('#98a099' if g.status=='na' else '#17864e')) }}">{{ g.value }}</span>
-          <span class="chip {{ g.status }}">{{ {'ok':'OK','warn':'OVER','bad':'FAIL','na':'N/A'}[g.status] }}</span></div>
-      </div>
+  <h2>Pipeline position</h2>
+  <div class="hint">How many of the {{ d.total }} ticket{{ 's' if d.total != 1 else '' }} sit in each status right now, in workflow order. Every ticket is counted once.</div>
+  <div class="plist">
+  {% for p in d.pipeline %}
+    <div class="prow">
+      <span class="pdot" style="background:{{ p.color }}"></span>
+      <div class="plabel">{{ p.status }}</div>
+      <div class="ptrack"><span style="width:{{ p.width }}%;background:{{ p.color }}"></span></div>
+      <div class="pnum">{{ p.count }}</div>
+      <div class="pnote">{{ p.pct }}%</div>
     </div>
+  {% else %}
+    <div class="rr-muted">No tickets in this release.</div>
   {% endfor %}
   </div>
 </div>

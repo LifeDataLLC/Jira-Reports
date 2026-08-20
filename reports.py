@@ -381,11 +381,8 @@ _MILESTONES = [
     ("done",           "Done",                  cfg.STAGE_DONE),
 ]
 
-# Gate thresholds for the release verdict (tune here).
+# Window used for the development throughput / delivery-pace projection.
 RR_GATES = {
-    "high_bugs_max": 2,
-    "bounce_rate_max": 0.15,
-    "not_started_max": 8,
     "throughput_window_days": 21,
 }
 
@@ -401,6 +398,31 @@ _TIMELINE_CATEGORIES = [
     ("done", "Done", "#36b37e", cfg.STAGE_DONE),
 ]
 
+# ---------------------------------------------------------------------------
+# Pipeline position — one row per LIFEDATAV2 status, in workflow order, labelled
+# with the status name the team actually uses in Jira (no invented wording).
+#
+# Deliberately status-driven, NOT stage-driven: the stage map collapses
+# "Development Completed" and "Ready for QA (QA Env)" into a single stage, which
+# is exactly the distinction this view has to show. Reading raw status names also
+# keeps the view independent of the admin-editable bucket store.
+# ---------------------------------------------------------------------------
+_PIPELINE_ORDER = [
+    "To Do", "Backlog", "Selected for Development",
+    "In Progress / Start Investigation", "Investigation", "In Progress",
+    "Development / In Design", "Resume Development", "Ready for Design Review",
+    "Development Completed", "Ready for QA (QA Env)",
+    "In QA Testing (QA Env)", "Review and Testing", "Review/ Testing", "Review/Testing",
+    "Passed QA (Staging Ready)", "Ready for Staging Verification", "In Staging Testing",
+    "Passed Staging (Prod Ready)",
+    "In Production", "In Production Testing", "Verification in Production",
+    "Reopen", "Blocked", "Customer Feedback", "Cannot Reproduce",
+    "Pause Investigation", "Pause Development / Design", "Pause QA Testing",
+    "Pause Staging Testing", "Pause Production Testing",
+    "Resolved", "Resolved in Production", "Close", "Done",
+]
+_PIPELINE_RANK = {s: i for i, s in enumerate(_PIPELINE_ORDER)}
+
 
 def _furthest_index(issue):
     """Highest linear-stage index the ticket has ever reached (from the changelog),
@@ -413,9 +435,9 @@ def _furthest_index(issue):
 
 def release_readiness(version_issues, version_name, release_date=None, now=None,
                       window_days=14, capacity_per_week=0):
-    """Release readiness for one fix version: a pipeline funnel (how far the batch
-    has progressed), throughput-based projection, coverage gaps, and an auditable
-    set of ship gates that roll up to a GO / AT RISK / NO-GO verdict.
+    """Release readiness for one fix version: where every ticket currently sits in
+    the workflow (`pipeline`), how far the batch has progressed (`funnel`),
+    throughput-based projection, and coverage gaps.
 
     release_date: the version's Jira releaseDate (a date), or None.
     """
@@ -534,66 +556,6 @@ def release_readiness(version_issues, version_name, release_date=None, now=None,
         cap_proj_days = None
     cap_proj_date = (today + dt.timedelta(days=cap_proj_days)) if cap_proj_days is not None else None
 
-    # --- Ship gates -> verdict ---
-    # Per-ticket detail for what's driving each gate now lives in the release
-    # timeline below (grouped by stage), so gates here are aggregate-only.
-    def g(name, sub, measure, value, status, level="warn"):
-        return {"name": name, "sub": sub, "measure": measure,
-                "value": value, "status": status, "level": level}
-
-    gates = [
-        g("Blocked tickets", "Genuinely blocked (Blocked / Customer Feedback / Cannot Reproduce)",
-          "0", len(blocked), "warn" if blocked else "ok"),
-        g("QA bounce rate", "Returned from QA ÷ reached QA",
-          f"< {round(RR_GATES['bounce_rate_max']*100)}%", f"{round(bounce_rate*100)}%",
-          "warn" if bounce_rate >= RR_GATES["bounce_rate_max"] else "ok"),
-    ]
-    if schedule["status"] == "na":
-        gates.append(g("Schedule — pace vs capacity",
-                       "Remaining dev work ÷ weeks to target, vs. the team's expected pace",
-                       schedule["note"], "—", "na"))
-    else:
-        rp = schedule["required_pace"]
-        val = "past due" if (schedule["status"] == "warn" and rp is None) else \
-              ("0/wk" if rp is None else f"{rp:.1f}/wk")
-        gates.append(g("Schedule — pace vs capacity",
-                       "Remaining dev work ÷ weeks to target, vs. the team's expected pace",
-                       f"≤ {cap:g}/wk (team capacity)", val, schedule["status"]))
-    gates.append(g("Due date set",
-                   "Team policy: every open ticket needs a due date until resolved/done",
-                   "0 missing", len(missing_due),
-                   "bad" if missing_due else "ok"))
-
-    if any(x["status"] == "bad" and x["level"] == "block" for x in gates):
-        verdict = "NO-GO"
-    elif any(x["status"] in ("bad", "warn") for x in gates):
-        verdict = "AT RISK"
-    else:
-        verdict = "GO"
-
-    # --- Verdict reasons (banner) ---
-    reasons = []
-    if crit:
-        reasons.append(("bad", f"{len(crit)} open critical bug"
-                        f"{'s' if len(crit) != 1 else ''} — must be 0 before release"))
-    if schedule["status"] == "warn":
-        rp = schedule["required_pace"]
-        if rp is None:
-            reasons.append(("warn", "Past the target date with development still remaining"))
-        else:
-            reasons.append(("warn", f"Needs {rp:.1f} tickets/wk to hit the target — "
-                            f"above the team's {cap:g}/wk pace"))
-    if missing_due:
-        reasons.append(("bad", f"{len(missing_due)} open ticket"
-                        f"{'s' if len(missing_due) != 1 else ''} missing a due date"))
-    if blocked:
-        reasons.append(("warn", f"{len(blocked)} blocked ticket"
-                        f"{'s' if len(blocked) != 1 else ''}"))
-    if len(high) > RR_GATES["high_bugs_max"]:
-        reasons.append(("warn", f"{len(high)} open high-priority bugs"))
-    if not reasons:
-        reasons.append(("ok", "All ship gates pass — clear to release"))
-
     # --- Development burn-up: daily cumulative tickets reaching dev-complete
     #     over the selected window (7 / 14 / 30 days) ---
     burnup = []
@@ -622,7 +584,7 @@ def release_readiness(version_issues, version_name, release_date=None, now=None,
         if i.key in blocked_keys:
             flags.append({"label": "Blocked", "cls": "bad"})
         if i.key in paused_keys:
-            flags.append({"label": "Paused for the day", "cls": "paused"})
+            flags.append({"label": "Paused", "cls": "paused"})
         if i.key in bounced_keys:
             flags.append({"label": "Returned from QA", "cls": "warn"})
         if i.key in missing_due_keys:
@@ -670,10 +632,31 @@ def release_readiness(version_issues, version_name, release_date=None, now=None,
             } for i in group],
         })
 
+    # --- Pipeline position: how many tickets sit in each Jira status right now,
+    #     in workflow order, labelled with the team's own status names. Unlike
+    #     the cumulative funnel above, each ticket appears in exactly one row and
+    #     the counts sum to `total`. Statuses holding nothing are left out, so
+    #     the rows show where the work actually is. ---
+    by_status = {}
+    for i in issues:
+        by_status.setdefault(i.status, []).append(i)
+    row_max = max([len(g) for g in by_status.values()] + [1])
+    # Known statuses in workflow order; anything the workflow gained since this
+    # list was written still gets a row (never silently dropped) at the end.
+    pipeline = [{
+        "status": status,
+        "color": cfg.STAGE_COLORS.get(cfg.stage_of(status), "#8993a4"),
+        "count": len(group),
+        "pct": pct(len(group)),
+        "width": round(100 * len(group) / row_max),
+        "known": status in _PIPELINE_RANK,
+    } for status, group in sorted(
+        by_status.items(),
+        key=lambda kv: (_PIPELINE_RANK.get(kv[0], len(_PIPELINE_ORDER)), kv[0]))]
+
     return {
         "version": version_name, "release_date": release_date,
-        "days_to_target": days_to_target, "total": total, "verdict": verdict,
-        "reasons": reasons[:3], "funnel": funnel,
+        "days_to_target": days_to_target, "total": total, "funnel": funnel,
         "dev_completed": dev_done, "dev_completed_pct": pct(dev_done),
         "passed_staging": counts["passed_staging"], "passed_staging_pct": pct(counts["passed_staging"]),
         "throughput": round(throughput, 1), "remaining_dev": remaining_dev,
@@ -688,8 +671,8 @@ def release_readiness(version_issues, version_name, release_date=None, now=None,
         "bounce_rate": round(bounce_rate * 100),
         "not_started": len(not_started), "missing_due": len(missing_due),
         "no_release": len(no_release), "unassigned": len(unassigned),
-        "gates": gates, "ownership": ownership,
-        "timeline": timeline,
+        "ownership": ownership,
+        "timeline": timeline, "pipeline": pipeline,
         "burnup": burnup, "window_days": window_days,
         # legacy keys kept so older callers/tests keep working
         "done": counts["done"], "completion_pct": pct(counts["done"]),
