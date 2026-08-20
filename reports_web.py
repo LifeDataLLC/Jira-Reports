@@ -500,8 +500,9 @@ REL = """
     <div class="val" style="font-size:18px">{{ d.schedule.note or 'On track' }}</div>
     <div class="meta">{% if d.days_to_target is not none %}{{ d.days_to_target }} days to target{% endif %}</div>
     {% endif %}</div>
-  <div class="tile"><div class="th"><span class="tl">Critical bugs and Blocked</span></div>
-    <div class="val">{{ d.open_critical + d.blocked }}</div><div class="meta">{{ d.open_critical }} critical bug{{ 's' if d.open_critical!=1 else '' }} · {{ d.blocked }} Blocked{% if d.paused %} · {{ d.paused }} in a Pause status{% endif %}</div></div>
+  <div class="tile"><div class="th"><span class="tl">Blocked</span></div>
+    <div class="val">{{ d.blocked }}</div>
+    <div class="meta">Blocked, Customer Feedback or Cannot Reproduce</div></div>
   <div class="tile"><div class="th"><span class="tl">Release-ready (passed staging)</span><span class="chip {{ 'ok' if d.passed_staging_pct>=80 else 'warn' }}">{{ d.passed_staging_pct }}%</span></div>
     <div class="val">{{ d.passed_staging }} <small>/ {{ d.total }}</small></div><div class="rbar"><span style="width:{{ d.passed_staging_pct }}%;background:#57d9a3"></span></div>
     <div class="meta">reached Passed Staging (Prod Ready) or later</div></div>

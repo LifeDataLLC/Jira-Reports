@@ -407,19 +407,28 @@ _TIMELINE_CATEGORIES = [
 # is exactly the distinction this view has to show. Reading raw status names also
 # keeps the view independent of the admin-editable bucket store.
 # ---------------------------------------------------------------------------
+# Each "Pause …" status sits immediately before the stage it interrupts (the
+# pairing comes from workflow.ACTIVE, where every active status names its own
+# pause counterpart), so a paused ticket reads next to the work it stalled
+# rather than in a pile at the bottom. The stage-less exceptions — Blocked and
+# friends, and Reopen — have no single place in the flow, so they trail the list.
 _PIPELINE_ORDER = [
     "To Do", "Backlog", "Selected for Development",
+    "Pause Investigation",
     "In Progress / Start Investigation", "Investigation", "In Progress",
+    "Pause Development / Design",
     "Development / In Design", "Resume Development", "Ready for Design Review",
     "Development Completed", "Ready for QA (QA Env)",
+    "Pause QA Testing",
     "In QA Testing (QA Env)", "Review and Testing", "Review/ Testing", "Review/Testing",
-    "Passed QA (Staging Ready)", "Ready for Staging Verification", "In Staging Testing",
-    "Passed Staging (Prod Ready)",
-    "In Production", "In Production Testing", "Verification in Production",
-    "Reopen", "Blocked", "Customer Feedback", "Cannot Reproduce",
-    "Pause Investigation", "Pause Development / Design", "Pause QA Testing",
-    "Pause Staging Testing", "Pause Production Testing",
+    "Passed QA (Staging Ready)", "Ready for Staging Verification",
+    "Pause Staging Testing",
+    "In Staging Testing",
+    "Passed Staging (Prod Ready)", "In Production",
+    "Pause Production Testing",
+    "In Production Testing", "Verification in Production",
     "Resolved", "Resolved in Production", "Close", "Done",
+    "Reopen", "Blocked", "Customer Feedback", "Cannot Reproduce",
 ]
 _PIPELINE_RANK = {s: i for i, s in enumerate(_PIPELINE_ORDER)}
 
@@ -659,9 +668,10 @@ def release_readiness(version_issues, version_name, release_date=None, now=None,
     by_status = {}
     for i in issues:
         by_status.setdefault(i.status, []).append(i)
-    shown = list(_PIPELINE_CORE) + sorted(
-        (s for s in by_status if s not in _PIPELINE_CORE),
-        key=lambda s: (_PIPELINE_RANK.get(s, len(_PIPELINE_ORDER)), s))
+    # Core stages plus whatever else is occupied, all in workflow order — so a
+    # "Pause …" row lands next to the stage it interrupts rather than at the end.
+    shown = sorted(set(_PIPELINE_CORE) | set(by_status),
+                   key=lambda s: (_PIPELINE_RANK.get(s, len(_PIPELINE_ORDER)), s))
     row_max = max([len(g) for g in by_status.values()] + [1])
     pipeline = [{
         "status": status,

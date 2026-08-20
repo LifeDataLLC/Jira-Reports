@@ -113,6 +113,20 @@ def test_pipeline_position():
     assert "Blocked" not in only and "Reopen" not in only
     assert [p["count"] for p in d3["pipeline"] if p["status"] == "To Do"] == [0]
 
+    # Each "Pause …" status renders immediately before the stage it interrupts,
+    # not collected at the bottom.
+    paused = R.load_issues([
+        _issue(f"PP-P{n}", "Task", "Medium", "Md Hasan", s, "To Do",
+               "2026-06-01T09:00:00-0700", None, "R1", [])
+        for n, s in enumerate(["Pause Development / Design", "Pause QA Testing",
+                               "Pause Staging Testing", "Pause Production Testing"])])
+    dp = [p["status"] for p in R.release_readiness(paused, "R1", now=NOW)["pipeline"]]
+    for pause, stage in [("Pause Development / Design", "Development / In Design"),
+                         ("Pause QA Testing", "In QA Testing (QA Env)"),
+                         ("Pause Staging Testing", "In Staging Testing"),
+                         ("Pause Production Testing", "In Production Testing")]:
+        assert dp.index(pause) == dp.index(stage) - 1, f"{pause} sits before {stage}"
+
     # A status the workflow gained since _PIPELINE_ORDER was written still gets a
     # row rather than vanishing from the counts.
     d2 = R.release_readiness(R.load_issues([
