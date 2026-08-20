@@ -486,6 +486,16 @@ def release_readiness(version_issues, version_name, release_date=None, now=None,
               for mid, lbl, _s in _MILESTONES]
     dev_done = counts["dev_completed"]
 
+    # --- Testing progress: every ticket has three testing gates to clear —
+    #     passed QA, passed staging, done — so a ticket sitting in production
+    #     testing has cleared two of its three and counts 2/3. Measured against
+    #     the furthest point each ticket reached, so a ticket bounced back from
+    #     staging keeps credit for the QA pass it already earned. ---
+    _TESTING_GATES = ("passed_qa", "passed_staging", "done")
+    testing_points = sum(counts[mid] for mid in _TESTING_GATES)
+    testing_steps = total * len(_TESTING_GATES)
+    testing_pct = round(100 * testing_points / testing_steps) if testing_steps else 0
+
     # --- Bugs / blockers ---
     open_bugs = [i for i in issues if i.is_bug and i.is_open]
     crit = [i for i in open_bugs if i.priority.lower() in ("highest", "critical")]
@@ -689,6 +699,8 @@ def release_readiness(version_issues, version_name, release_date=None, now=None,
         "version": version_name, "release_date": release_date,
         "days_to_target": days_to_target, "total": total, "funnel": funnel,
         "dev_completed": dev_done, "dev_completed_pct": pct(dev_done),
+        "testing_points": testing_points, "testing_steps": testing_steps,
+        "testing_pct": testing_pct,
         "passed_staging": counts["passed_staging"], "passed_staging_pct": pct(counts["passed_staging"]),
         "throughput": round(throughput, 1), "remaining_dev": remaining_dev,
         "proj_date": proj_date, "proj_delta": proj_delta,

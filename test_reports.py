@@ -138,8 +138,64 @@ def test_pipeline_position():
     assert sum(p["count"] for p in d2["pipeline"]) == d2["total"] == 1
 
 
+def test_testing_progress():
+    """Testing completed: every ticket has three gates to clear — passed QA,
+    passed staging, done — so a ticket in production testing counts 2 of 3."""
+    def one(status, cat):
+        d = R.release_readiness(R.load_issues([
+            _issue("T-1", "Task", "Medium", "Md Hasan", status, cat,
+                   "2026-06-01T09:00:00-0700", None, "R1", [])]), "R1", now=NOW)
+        return d["testing_points"], d["testing_steps"], d["testing_pct"]
+
+    for status, cat, expect in [
+            ("Development / In Design", "In Progress", 0),
+            ("Development Completed", "In Progress", 0),
+            ("Ready for QA (QA Env)", "To Do", 0),
+            ("In QA Testing (QA Env)", "In Progress", 0),   # in QA, hasn't passed
+            ("Passed QA (Staging Ready)", "To Do", 1),
+            ("In Staging Testing", "In Progress", 1),
+            ("Passed Staging (Prod Ready)", "To Do", 2),
+            ("In Production Testing", "In Progress", 2),    # 2 of 3
+            ("Done", "Done", 3)]:
+        points, steps, _p = one(status, cat)
+        assert steps == 3, "three gates per ticket"
+        assert points == expect, f"{status} should clear {expect} of 3, got {points}"
+
+    assert one("In Production Testing", "In Progress")[2] == 67
+    assert one("Done", "Done")[2] == 100
+
+    # Aggregate: 0 + 1 + 2 + 3 = 6 of 12 steps = 50%.
+    mixed = R.load_issues([
+        _issue(k, "Task", "Medium", "Md Hasan", s, c,
+               "2026-06-01T09:00:00-0700", None, "R1", [])
+        for k, s, c in [("T-A", "Development / In Design", "In Progress"),
+                        ("T-B", "Passed QA (Staging Ready)", "To Do"),
+                        ("T-C", "In Production Testing", "In Progress"),
+                        ("T-D", "Done", "Done")]])
+    d = R.release_readiness(mixed, "R1", now=NOW)
+    assert (d["testing_points"], d["testing_steps"], d["testing_pct"]) == (6, 12, 50)
+
+    # Measured on furthest progress, so a ticket bounced back to dev keeps the
+    # QA pass it already earned rather than resetting to zero.
+    bounced = R.load_issues([
+        _issue("T-E", "Task", "Medium", "Md Hasan", "Development / In Design",
+               "In Progress", "2026-05-20T09:00:00-0700", None, "R1",
+               [{"created": "2026-06-07T09:00:00-0700",
+                 "items": [{"field": "status", "fromString": "Passed QA (Staging Ready)",
+                            "toString": "Development / In Design"}]},
+                {"created": "2026-05-25T09:00:00-0700",
+                 "items": [{"field": "status", "fromString": "Development / In Design",
+                            "toString": "Passed QA (Staging Ready)"}]}])])
+    assert R.release_readiness(bounced, "R1", now=NOW)["testing_points"] == 1
+
+    # No tickets must not divide by zero.
+    empty = R.release_readiness([], "R1", now=NOW)
+    assert (empty["testing_points"], empty["testing_steps"], empty["testing_pct"]) == (0, 0, 0)
+
+
 if __name__ == "__main__":
     test_analytics_cycle_and_pause()
     test_reports_end_to_end()
     test_pipeline_position()
+    test_testing_progress()
     print("All tests passed.")
