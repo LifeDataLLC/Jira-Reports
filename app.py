@@ -68,11 +68,14 @@ if os.environ.get("JIRA_API_TOKEN") and jc.CACHE_TTL > 0:
 _PUBLIC_PREFIXES = ("/login", "/register", "/logout", "/tasks/snapshot", "/static", "/favicon")
 # Admin-only areas (Settings + admin tools + the cross-team compliance views).
 _ADMIN_PREFIXES = ("/settings", "/admin", "/my-day/rollup", "/my-day/feed")
-# Until the other screens are ready, employees are limited to My Day and their own
-# account pages; every other screen (Attention, QA, Flow, etc.) is admin-only.
-# Admins are exempt from this list. Note /my-day/rollup and /my-day/feed still fall
-# under _ADMIN_PREFIXES above, so they stay admin-only even though they match here.
-_EMPLOYEE_PREFIXES = ("/my-day", "/change-password", "/logout")
+# Until the other screens are ready, employees are limited to My Day + Release
+# and their own account pages; every other screen (Attention, QA, Flow, etc.) is
+# admin-only. Admins are exempt from this list. Note /my-day/rollup and
+# /my-day/feed still fall under _ADMIN_PREFIXES above, so they stay admin-only
+# even though they match here. /api/v2/ticket-history backs the Release
+# timeline's per-ticket history popup.
+_EMPLOYEE_PREFIXES = ("/my-day", "/release", "/api/v2/ticket-history",
+                      "/change-password", "/logout")
 
 
 @app.before_request
