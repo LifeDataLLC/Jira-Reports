@@ -237,6 +237,11 @@ def _inject_filter_ctx(ctx, user, admin):
     proj_opts = report if len(report) <= 1 else [{"key": "all", "name": "All spaces"}] + report
     ctx.setdefault("filter_projects", proj_opts)
     ctx.setdefault("filter_project_selected", psel)
+    # Echo whatever the user typed. A screen that applies a default window when
+    # these are blank should pass its own values instead, so the boxes name the
+    # range actually on screen rather than sitting empty beside it.
+    ctx.setdefault("filter_start", (request.args.get("start") or "").strip())
+    ctx.setdefault("filter_end", (request.args.get("end") or "").strip())
     if admin:
         import auth
         ctx.setdefault("filter_devs", auth.visible_developers())
@@ -267,8 +272,8 @@ DEV_SELECT = """
 
 FILTER_BAR = """
 <form method="get" class="filterbar" id="globalFilters">""" + PROJECT_SELECT + DEV_SELECT + """
-  <label>Start<input type="date" name="start" value="{{ request.args.get('start','') }}"></label>
-  <label>End<input type="date" name="end" value="{{ request.args.get('end','') }}"></label>
+  <label>Start<input type="date" name="start" value="{{ filter_start }}"></label>
+  <label>End<input type="date" name="end" value="{{ filter_end }}"></label>
   {{ extra_filters|default('')|safe }}
   <button class="btn" type="submit">Apply</button>
   <a class="btn-ghost" href="{{ request.path }}">Clear</a>
@@ -1442,11 +1447,17 @@ def _group_by_dev(rows, window_seconds=None):
 
 def _window_label(start, end):
     """Plain wording for the window, so the page can say 'in the past 7 days'
-    rather than making the reader infer it from two date inputs."""
+    rather than making the reader infer it from two date inputs.
+
+    `end` is exclusive, so the last day named is the day before it — printing
+    `end` itself would claim a day more than the page actually covers."""
     days = round((end - start).total_seconds() / 86400)
     if not (request.args.get("start") or request.args.get("end")):
         return f"in the past {days} days"
-    return f"{start.strftime('%b %-d')} → {end.strftime('%b %-d')}"
+    last = end - dt.timedelta(days=1)
+    if last.date() == start.date():
+        return f"on {start.strftime('%b %-d')}"
+    return f"{start.strftime('%b %-d')} → {last.strftime('%b %-d')}"
 
 
 ACTIVE_TIME_TMPL = """
@@ -1615,11 +1626,39 @@ def _active_time_data():
     import flow_quality as fq
     project, developer, start, end = parse_filters()
     issues = _issues(project)
-    win_start = start or (A.now_utc() - dt.timedelta(days=7))
-    win_end = end or A.now_utc()
+    win_start, win_end = _resolve_window(start, end)
     rows = fq.active_time(issues, developer, win_start, win_end, dr.dev_match_exact,
                           _ids_by_name())
     return rows, win_start, win_end
+
+
+_DEFAULT_WINDOW_DAYS = 7
+
+
+def _resolve_window(start, end):
+    """The window to report on, as [start, end) with both ends midnight-aligned.
+
+    Defaults to the last 7 whole days ending today. Whole days rather than a
+    rolling 168 hours specifically so the Start/End boxes can name the window
+    exactly: re-submitting them unchanged has to land on the identical range,
+    which an end anchored to "now" could never do.
+
+    parse_filters already advances an explicit end date by a day to make it
+    inclusive, so both ends arrive here in the same exclusive form."""
+    if end is None:
+        tomorrow = A.now_utc().date() + dt.timedelta(days=1)
+        end = dt.datetime.combine(tomorrow, dt.time.min, dt.timezone.utc)
+    if start is None:
+        start = end - dt.timedelta(days=_DEFAULT_WINDOW_DAYS)
+    return start, end
+
+
+def _window_inputs(win_start, win_end):
+    """The dates the Start/End boxes should carry — always the window actually
+    on screen, never blank. win_end is exclusive, so step back a day to name
+    the last day included."""
+    return (win_start.strftime("%Y-%m-%d"),
+            (win_end - dt.timedelta(days=1)).strftime("%Y-%m-%d"))
 
 
 def _ids_by_name():
@@ -1747,9 +1786,11 @@ def active_time_screen():
     seen = {}
     for r in rows:
         seen.setdefault(r["issue"].status, _status_color(r["issue"].status))
+    f_start, f_end = _window_inputs(win_start, win_end)
     return page(ACTIVE_TIME_TMPL, active="/active-time", show_banner=False,
                 rows=rows, by_dev=by_dev, dur=_dur, window_label=label,
-                statuses_seen=sorted(seen.items()))
+                statuses_seen=sorted(seen.items()),
+                filter_start=f_start, filter_end=f_end)
 
 
 @v3.route("/api/v2/active-time.csv")

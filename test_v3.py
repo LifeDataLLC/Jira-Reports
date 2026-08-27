@@ -449,6 +449,61 @@ def test_elapsed_and_effort_stay_separate():
     check("rounding carries into days", sw._dur(168 * 3600 - 4) == "7d")
 
 
+def test_window_boxes_name_what_is_shown():
+    """The Start/End boxes must always describe the window on screen, and
+    re-submitting them unchanged must land on exactly the same range — a
+    default that only lived in the code, leaving the boxes blank, is what this
+    replaces."""
+    import re
+
+    import app
+    import jira_client as jc
+    import screens_web as sw
+
+    raws = [mkraw("WN-1", "Development / In Design", "In Progress", created_d=40,
+                  events=[(20, "Jane Doe", "status", "To Do", "Development / In Design")])]
+    jc.fetch_dev_dataset = lambda project=None, lookback_days=None: raws
+    jc.detect_custom_fields = lambda: {"story_points": None, "sprint": None, "start_date": None}
+    jc.report_projects = lambda: [{"key": "LIFEDATAV2", "name": "LIFEDATAV2"}]
+    jc.report_project_keys = lambda: ["LIFEDATAV2"]
+    jc.configured_projects = lambda: ["LIFEDATAV2"]
+    c = login_admin(app.app.test_client())
+
+    def boxes(url):
+        h = c.get(url).get_data(as_text=True)
+        return (re.search(r'name="start" value="([^"]*)"', h).group(1),
+                re.search(r'name="end" value="([^"]*)"', h).group(1), h)
+
+    s, e, h = boxes("/active-time")
+    check("start box is filled in on a defaulted view", bool(s))
+    check("end box is filled in on a defaulted view", bool(e))
+    check("default window is named as a week", "past 7 days" in h)
+    check("default window really spans 7 days",
+          (dt.date.fromisoformat(e) - dt.date.fromisoformat(s)).days == 6)
+    check("default window ends today", dt.date.fromisoformat(e) == A.now_utc().date())
+
+    # Feeding the shown dates straight back must not shift the range.
+    s2, e2, _ = boxes(f"/active-time?start={s}&end={e}")
+    check("dates round-trip unchanged", (s2, e2) == (s, e))
+
+    s3, e3, h3 = boxes("/active-time?start=2026-08-01&end=2026-08-10")
+    check("an explicit range is echoed exactly", (s3, e3) == ("2026-08-01", "2026-08-10"))
+    # end is exclusive internally; the label must still name the last day the
+    # page actually covers, not the day after it.
+    check("label names the last day included, not the day after",
+          "Aug 1 → Aug 10" in h3 and "Aug 11" not in h3)
+
+    win = sw._resolve_window(*(lambda a, b: (a, b))(None, None))
+    check("resolved default window is midnight aligned",
+          win[0].hour == 0 and win[1].hour == 0)
+    check("a single-day range reads as one day",
+          "on Aug 5" in boxes("/active-time?start=2026-08-05&end=2026-08-05")[2])
+
+    # Screens with their own defaults must keep their existing blank boxes.
+    fs, fe, _ = boxes("/flow")
+    check("other screens' date boxes are untouched", fs == "" and fe == "")
+
+
 def test_long_ticket_list_stays_readable():
     """A developer can easily touch 14 tickets in a week. The per-person list
     has to stay scannable, and the shared bar scale only works if the visible
