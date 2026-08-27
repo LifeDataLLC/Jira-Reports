@@ -73,6 +73,144 @@ def cycle_stats(rows) -> dict:
                       "n": len(cyc)}}
 
 
+def ownership_spans(issue) -> list[tuple]:
+    """(owner, enter, exit) spans reconstructed from the assignee changelog —
+    who held the ticket when, same segment-rebuilding shape analytics.analyze
+    uses for status.
+
+    The changelog only records display NAMES for historical assignees (no
+    accountIds), so spans are keyed by name; only the current assignee can be
+    matched by id. Unassigned stretches are kept as "Unassigned" rather than
+    dropped, so a ticket's spans always tile its whole life."""
+    end_cap = issue.resolved or A.now_utc()
+    events = issue.assignee_events
+    if not events:
+        return [(issue.assignee, issue.created, end_cap)] if issue.created else []
+    spans = []
+    cur = events[0][2] or "Unassigned"          # fromString of the first change
+    seg_start = issue.created or events[0][0]
+    for ts, _author, _frm, to in events:
+        if ts >= seg_start:
+            spans.append((cur, seg_start, ts))
+        cur, seg_start = (to or "Unassigned"), ts
+    if end_cap >= seg_start:
+        spans.append((cur, seg_start, end_cap))
+    return spans
+
+
+def ticket_active_blocks(issue, start=None, end=None) -> list[tuple]:
+    """(owner, status, enter, exit) — active status segments intersected with
+    the ownership spans, in time order.
+
+    The shared primitive behind both the per-person totals and the ownership
+    timeline, so the summed hours and the drawn bands can never disagree."""
+    out = []
+    spans = ownership_spans(issue)
+    for status, s_in, s_out in issue.timeline.segments:
+        if not st.is_active_status(status):
+            continue
+        a = max(s_in, start) if start else s_in
+        b = min(s_out, end) if end else s_out
+        if b <= a:
+            continue
+        for owner, o_in, o_out in spans:
+            if not (o_in and o_out):
+                continue
+            lo, hi = max(a, o_in), min(b, o_out)
+            if hi > lo:
+                out.append((owner, status, lo, hi))
+    out.sort(key=lambda b: b[2])
+    return out
+
+
+def ticket_active_time(issue, start=None, end=None, ids_by_name=None) -> list[dict]:
+    """One ticket's active-status seconds, split by who OWNED it at the time.
+
+    A ticket handed from one developer to another credits each with the
+    stretch they actually held it — the current assignee doesn't inherit
+    everyone else's work. Keeps the per-status split per person too, so the
+    view can show what kind of work each stretch was.
+
+    `ids_by_name` maps display name -> accountId (auth.all_developers). The
+    changelog names historical assignees but never gives their accountId, so
+    without it a past owner's rows carry no id — and a developer filter built
+    from the dropdown (which supplies accountIds) would silently drop a
+    person's own work on any ticket they have since handed off."""
+    per = {}
+    for owner, status, lo, hi in ticket_active_blocks(issue, start, end):
+        secs = (hi - lo).total_seconds()
+        p = per.setdefault(owner, {"person": owner, "seconds": 0, "statuses": {}})
+        p["seconds"] += secs
+        p["statuses"][status] = p["statuses"].get(status, 0) + secs
+    rows = [p for p in per.values() if p["seconds"] > 0]
+    total = sum(p["seconds"] for p in rows) or 1
+    for p in rows:
+        p["hours"] = round(p["seconds"] / 3600, 1)
+        p["pct"] = round(100 * p["seconds"] / total, 1)
+        p["person_id"] = ((ids_by_name or {}).get(p["person"])
+                          or (issue.assignee_id if p["person"] == issue.assignee else ""))
+    rows.sort(key=lambda p: -p["seconds"])
+    return rows
+
+
+def logged_seconds(issue, person=None, person_id=None, start=None, end=None) -> float:
+    """Worklog seconds booked on this ticket inside the window, optionally by
+    one person.
+
+    This is the ONLY real effort number available — everything else on the
+    Active Time screens is calendar duration in a status, which is elapsed
+    time (nights and weekends included), not hours worked. Keeping the two
+    apart is the difference between "this sat in Development for 7 days" and
+    "someone worked 6 hours on it"."""
+    total = 0
+    for w in issue.worklogs:
+        if not w.get("seconds") or not w.get("ts"):
+            continue
+        if start and w["ts"] < start:
+            continue
+        if end and w["ts"] >= end:
+            continue
+        if person is not None:
+            if not (w.get("author") == person
+                    or (person_id and w.get("author_id") == person_id)):
+                continue
+        total += w["seconds"]
+    return total
+
+
+def active_time(issues, developer=None, start=None, end=None, match=None,
+                ids_by_name=None) -> list[dict]:
+    """Per-(developer, ticket) active-status time inside [start, end).
+
+    'Active' = st.is_active_status() — the literal "someone is on this right
+    now" statuses (one-per-lane), NOT the broader cycle-time bucket set used
+    by cycle_rows/bottleneck above. A ticket sitting in a hand-off/queue
+    status like "Ready for QA (QA Env)" the whole window contributes zero
+    here even though it's still "in progress" for cycle-time purposes.
+
+    Time is attributed by ownership-at-the-time (ticket_active_time), not to
+    the current assignee, so a ticket that changed hands mid-window appears
+    once per developer who actually held it. `active_seconds` is ELAPSED time
+    in an active status; `logged_seconds` is booked worklog effort — the two
+    answer different questions and the screens must never conflate them.
+    Zero-time rows and hidden developers are dropped."""
+    rows = []
+    for i in issues:
+        for p in ticket_active_time(i, start, end, ids_by_name):
+            if developer and match and not match(developer, p["person"], p["person_id"]):
+                continue
+            if st.is_developer_hidden(p["person"], p["person_id"]):
+                continue
+            rows.append({"developer": p["person"], "developer_id": p["person_id"],
+                         "issue": i, "active_seconds": p["seconds"],
+                         "active_days": p["seconds"] / 86400,
+                         "logged_seconds": logged_seconds(
+                             i, p["person"], p["person_id"], start, end),
+                         "statuses": p["statuses"]})
+    rows.sort(key=lambda r: -r["active_seconds"])
+    return rows
+
+
 def bottleneck(issues) -> list[dict]:
     """FR-F3: median days per status across tickets (only statuses with data)."""
     per_status = {}

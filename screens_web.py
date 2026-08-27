@@ -70,8 +70,9 @@ def _issues_in_range(project, start, end):
 
 NAV = [
     ("/my-day", "My Day"), ("/attention", "Attention"), ("/qa", "QA"),
-    ("/flow", "Flow"), ("/quality", "Quality"), ("/release", "Release"),
-    ("/investigate", "Investigate"), ("/exec", "Trends"), ("/settings", "Settings"),
+    ("/flow", "Flow"), ("/active-time", "Active Time"), ("/quality", "Quality"),
+    ("/release", "Release"), ("/investigate", "Investigate"), ("/exec", "Trends"),
+    ("/settings", "Settings"),
 ]
 
 CHROME_TOP = """
@@ -202,7 +203,8 @@ def page(body, active="", show_banner=True, **ctx):
     user = auth.current_user()
     admin = bool(user and user.get("role") == "admin")
     # Until the other screens are ready, employees only get My Day + Release;
-    # admins see everything. (Route access is also enforced server-side in app.py.)
+    # admins see everything. (Route access is also enforced server-side in
+    # app.py — this list only controls what the nav offers.)
     items = list(NAV) if admin else [(h, l) for h, l in NAV if h in ("/my-day", "/release")]
     navlinks = "".join(
         f'<a href="{href}" class="{"active" if href == active else ""}">{label}</a>'
@@ -1330,6 +1332,435 @@ def flow_json():
                     "tickets": [{"key": r["issue"].key, "dev_to_qa_h": r["dev_to_qa_h"],
                                  "cycle_h": r["cycle_h"], "rework_loops": r["rework_loops"]}
                                 for r in rows]})
+
+
+# ---------------------------------------------------------------------------
+# Active Time — active-status hours per developer per ticket, default past 7
+# days. Deliberately minimal: no KPI cards, no violations/thresholds, no
+# banner — a "how much time" view, not an alerting one.
+# ---------------------------------------------------------------------------
+
+def _dur(seconds):
+    """'3d 4h' / '18h' / '25m' — the app's existing duration wording, in days
+    first so a number can never be misread as hours-of-effort.
+
+    Rounds to whole hours BEFORE splitting off days, so a shade under 7 days
+    reads "7d" rather than "6d 24h". (app.hdur, which this mirrors, subtracts
+    days first and can leave a 24-hour remainder — worth fixing there too, but
+    that helper backs the legacy report pages.)"""
+    if not seconds:
+        return "—"
+    if seconds < 3600:
+        return f"{max(round(seconds / 60), 1)}m"
+    hours = round(seconds / 3600)
+    if hours < 24:
+        return f"{hours}h"
+    d, h = divmod(hours, 24)
+    return f"{d}d {h}h" if h else f"{d}d"
+
+
+# A real week is a handful of substantial tickets plus a long tail of brief
+# touches — a dev can easily end a week having been on 14. Listing all of them
+# at equal weight buries the few that mattered, so the tail is folded away by
+# default and summarised instead.
+#
+# Where to cut is decided by the data, not by a fixed row count: take tickets
+# in descending order until they account for _HEAD_SHARE of the person's time.
+# A concentrated week collapses to two or three rows; an evenly fragmented one
+# shows more, because in that case the spread IS the finding. The bounds stop
+# either extreme from being useless.
+_HEAD_SHARE = 85
+_HEAD_MIN, _HEAD_MAX = 3, 8
+
+
+def _split_head_tail(tickets, total):
+    """(head, tail) — the tickets carrying most of the time, and the rest."""
+    if len(tickets) <= _HEAD_MIN:
+        return tickets, []
+    run, cut = 0, len(tickets)
+    for n, t in enumerate(tickets, start=1):
+        run += t["active_seconds"]
+        if total and 100 * run / total >= _HEAD_SHARE:
+            cut = n
+            break
+    cut = max(_HEAD_MIN, min(cut, _HEAD_MAX))
+    # Leaving a tail of one just to hide it costs a click and saves no space.
+    if len(tickets) - cut == 1:
+        cut = len(tickets)
+    return tickets[:cut], tickets[cut:]
+
+
+def _group_by_dev(rows, window_seconds=None):
+    """Group active_time() rows by developer for the per-person lists.
+
+    Two deliberate choices, both driven by the 14-tickets-in-a-week case:
+
+    Bars share ONE scale across the whole page, so a given length always means
+    the same duration wherever it appears — an earlier version sized each
+    developer's track against the busiest developer while sizing segments
+    against that developer's own total, which made equal-looking bars mean
+    different amounts, exactly backwards for a chart built for comparison.
+
+    That shared scale only survives because the long tail is collapsed: with
+    one 6d ticket and a dozen 20-minute touches, every tail bar would round to
+    an invisible sliver and the chart would say nothing about 13 of 14 rows.
+    Showing the top few keeps the visible rows within comparable magnitudes,
+    and the tail is reported as a count and a total rather than as a row of
+    hairlines."""
+    groups = {}
+    for r in rows:
+        g = groups.setdefault(r["developer"], {
+            "developer": r["developer"], "seconds": 0, "logged": 0, "tickets": []})
+        g["seconds"] += r["active_seconds"]
+        g["logged"] += r["logged_seconds"]
+        g["tickets"].append(r)
+    out = list(groups.values())
+    out.sort(key=lambda g: -g["seconds"])
+    longest = max((r["active_seconds"] for r in rows), default=0) or 1
+    for g in out:
+        g["label"] = _dur(g["seconds"])
+        g["logged_label"] = _dur(g["logged"])
+        g["count"] = len(g["tickets"])
+        g["tickets"].sort(key=lambda t: -t["active_seconds"])
+        # Concurrency is the reason a person's total can exceed the window:
+        # two tickets active at once each accrue the same wall-clock hours.
+        g["over_window"] = bool(window_seconds and g["seconds"] > window_seconds * 1.02)
+        for t in g["tickets"]:
+            t["bar_pct"] = round(100 * t["active_seconds"] / longest, 1)
+            # Share of this person's own time — what the split bar encodes.
+            t["share_pct"] = round(100 * t["active_seconds"] / (g["seconds"] or 1), 2)
+            t["label"] = _dur(t["active_seconds"])
+            t["logged_label"] = _dur(t["logged_seconds"])
+            t["color"] = _status_color(t["issue"].status)
+        g["top"], g["rest"] = _split_head_tail(g["tickets"], g["seconds"])
+        g["rest_label"] = _dur(sum(t["active_seconds"] for t in g["rest"]))
+        # How concentrated the week was: one ticket's share of it. With 14
+        # tickets this is the number that says "scattered" or "heads-down".
+        g["top_share"] = g["tickets"][0]["share_pct"] if g["tickets"] else 0
+    return out
+
+
+def _window_label(start, end):
+    """Plain wording for the window, so the page can say 'in the past 7 days'
+    rather than making the reader infer it from two date inputs."""
+    days = round((end - start).total_seconds() / 86400)
+    if not (request.args.get("start") or request.args.get("end")):
+        return f"in the past {days} days"
+    return f"{start.strftime('%b %-d')} → {end.strftime('%b %-d')}"
+
+
+ACTIVE_TIME_TMPL = """
+<h1>Active Time</h1>
+<div class="sub">How long each ticket was in someone's hands and moving — {{ window_label }}.
+Bars are elapsed time in a working status; “logged” is booked worklog effort.</div>
+""" + FILTER_BAR + """
+<style>
+ .at-row{display:grid;grid-template-columns:104px minmax(0,1fr) 150px 122px;gap:11px;align-items:center;padding:3px 0}
+ .at-row:hover{background:#fafbfa}
+ .at-sum{font-size:12.5px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+ .at-track{background:#eef0ee;border-radius:5px;height:16px;overflow:hidden}
+ .at-fill{height:100%;min-width:3px;border-radius:5px}
+ .at-split{display:flex;height:12px;border-radius:4px;overflow:hidden;background:#eef0ee;min-width:190px;flex:1;max-width:340px}
+ .at-split div{border-right:1px solid #fff}
+ .at-split div:last-child{border-right:none}
+ .at-more{cursor:pointer;font-size:12.5px;color:var(--green-d);font-weight:600;padding:6px 0 2px}
+ .at-more:hover{text-decoration:underline}
+ details[open] .at-more{margin-bottom:2px}
+</style>
+<h2>Each ticket, by person <span class="muted">(bars share one scale — longest stretch on the page is full width)</span></h2>
+<div class="sectionbox">
+{% for g in by_dev %}
+<div style="{% if not loop.last %}margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--line){% endif %}">
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap">
+    <span style="font-size:14px;font-weight:800">{{ g.developer }}</span>
+    <span class="muted"><b style="color:var(--ink2)">{{ g.count }}</b> {{ 'ticket' if g.count == 1 else 'tickets' }} · {{ g.label }} total{% if g.logged_label != '—' %} · {{ g.logged_label }} logged{% endif %}</span>
+    {% if g.count > 1 %}
+    <div class="at-split" title="How this person's time split across their {{ g.count }} tickets">
+      {% for t in g.tickets %}<div title="{{ t.issue.key }} — {{ t.label }} ({{ t.share_pct|round|int }}%)" style="width:{{ t.share_pct }}%;background:{{ t.color }}"></div>{% endfor %}
+    </div>
+    <span class="muted" title="Share of this person's time on their single biggest ticket">{{ g.top_share|round|int }}% on {{ g.tickets[0].issue.key }}</span>
+    {% endif %}
+    {% if g.over_window %}<span class="pill" title="Two or more tickets were in a working status at the same time, so their elapsed hours overlap.">ran in parallel</span>{% endif %}
+  </div>
+  {% for t in g.top %}
+  <div class="at-row">
+    <a href="/active-time?key={{ t.issue.key }}" style="font-size:12.5px;font-weight:600">{{ t.issue.key }}</a>
+    <div class="at-sum" title="{{ t.issue.summary }} · {{ t.issue.status }}">{{ t.issue.summary }}</div>
+    <div class="at-track" title="{{ t.issue.status }} — {{ t.label }}"><div class="at-fill" style="width:{{ t.bar_pct }}%;background:{{ t.color }}"></div></div>
+    <div style="font-size:12.5px"><b>{{ t.label }}</b>{% if t.logged_label != '—' %} <span class="muted">· {{ t.logged_label }}</span>{% endif %}</div>
+  </div>
+  {% endfor %}
+  {% if g.rest %}
+  <details>
+    <summary class="at-more">{{ g.rest|length }} more {{ 'ticket' if g.rest|length == 1 else 'tickets' }} · {{ g.rest_label }} between them</summary>
+    {% for t in g.rest %}
+    <div class="at-row">
+      <a href="/active-time?key={{ t.issue.key }}" style="font-size:12.5px;font-weight:600">{{ t.issue.key }}</a>
+      <div class="at-sum" title="{{ t.issue.summary }} · {{ t.issue.status }}">{{ t.issue.summary }}</div>
+      <div class="at-track" title="{{ t.issue.status }} — {{ t.label }}"><div class="at-fill" style="width:{{ t.bar_pct }}%;background:{{ t.color }}"></div></div>
+      <div style="font-size:12.5px"><b>{{ t.label }}</b>{% if t.logged_label != '—' %} <span class="muted">· {{ t.logged_label }}</span>{% endif %}</div>
+    </div>
+    {% endfor %}
+  </details>
+  {% endif %}
+</div>
+{% else %}<div class="muted">Nobody had a ticket in a working status {{ window_label }}.</div>{% endfor %}
+{% if statuses_seen %}
+<div class="muted" style="margin-top:14px">{% for s, c in statuses_seen %}<span style="margin-right:12px"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:{{ c }};margin-right:3px"></span>{{ s }}</span>{% endfor %}</div>
+{% endif %}
+</div>
+
+<h2>All rows <span class="muted">({{ rows|length }})</span> · <a href="/api/v2/active-time.csv?{{ request.query_string.decode() }}" download>CSV</a></h2>
+<input id="atFilter" placeholder="Filter by ticket, person, summary or status…" style="width:100%;max-width:380px;padding:8px 11px;border:1px solid var(--line);border-radius:8px;font-size:13px;margin-bottom:9px">
+<table id="atTable">
+<tr><th>Developer</th><th>Ticket</th><th>Summary</th><th>Time in a working status</th><th>Logged effort</th><th>Current status</th></tr>
+{% for r in rows %}
+<tr><td>{{ r.developer }}</td>
+<td><a href="/active-time?key={{ r.issue.key }}">{{ r.issue.key }}</a></td>
+<td>{{ r.issue.summary }}</td>
+<td>{{ dur(r.active_seconds) }}</td>
+<td>{{ dur(r.logged_seconds) }}</td>
+<td><span class="pill">{{ r.issue.status }}</span></td></tr>
+{% else %}<tr><td colspan="6" class="muted">Nothing in a working status {{ window_label }}.</td></tr>{% endfor %}
+</table>
+<div class="muted"><span id="atCount"></span>A ticket that changed hands appears once per person who held it. Click any key to see that ticket's full history.</div>
+<script>
+(function(){
+  var box=document.getElementById('atFilter'), tbl=document.getElementById('atTable');
+  if(!box||!tbl)return;
+  var out=document.getElementById('atCount');
+  var rows=Array.prototype.slice.call(tbl.querySelectorAll('tr')).slice(1)
+    .filter(function(r){return !r.querySelector('td[colspan]')});
+  var total=rows.length;
+  box.addEventListener('input',function(){
+    var q=box.value.trim().toLowerCase(), shown=0;
+    rows.forEach(function(r){
+      var hit=!q||r.textContent.toLowerCase().indexOf(q)>-1;
+      r.style.display=hit?'':'none';
+      if(hit)shown++;
+    });
+    out.textContent=q?shown+' of '+total+' rows · ':'';
+  });
+})();
+</script>
+"""
+
+
+TICKET_MISSING_TMPL = """
+<h1>{{ key }}</h1>
+<div class="sub">No such ticket — check the key, or it may be outside the projects configured in Settings.</div>
+<div class="sectionbox"><a href="/active-time">← Back to all developers</a></div>
+"""
+
+
+TICKET_TIME_TMPL = """
+<h1>{{ issue.key }} <span style="font-weight:500;font-size:15px;color:var(--muted)">· active time by person</span></h1>
+<div class="sub">{{ issue.summary }}</div>
+<div class="sectionbox" style="font-size:15px;line-height:1.6">
+  Open <b>{{ elapsed_label }}</b> · worked <b>{{ active_label }}</b> of that (<b>{{ worked_pct }}%</b>)
+  · <b>{{ waiting_pct }}%</b> queued, paused, or waiting
+  {%- if logged_label != '—' %} · <b>{{ logged_label }}</b> logged{% endif %}
+  <div style="margin-top:6px">
+    {{ people|length }} {{ 'person' if people|length == 1 else 'people' }}{% if handoffs %}, {{ handoffs }} {{ 'handoff' if handoffs == 1 else 'handoffs' }}{% endif %} ·
+    now with <b>{{ issue.assignee }}</b> <span class="pill">{{ issue.status }}</span>
+    <span style="float:right"><a href="{{ issue.url }}" target="_blank">Open in Jira →</a> · <a href="/investigate?key={{ issue.key }}">Full event history →</a></span>
+  </div>
+</div>
+
+{% if tl %}
+<h2>Ownership timeline <span class="muted">(one lane per person, across the ticket's whole life)</span></h2>
+<div class="sectionbox">
+  <div style="display:grid;grid-template-columns:150px 1fr;gap:14px;align-items:center;margin-bottom:10px">
+    <div class="muted" style="font-weight:600">Ticket status</div>
+    <div style="position:relative;height:16px;background:#f2f3f2;border-radius:4px;overflow:hidden">
+      {% for b in tl.band %}<div title="{{ b.status }} — {{ b.label }}" style="position:absolute;left:{{ b.left }}%;width:{{ b.width }}%;min-width:2px;top:0;bottom:0;background:{{ b.color }}"></div>{% endfor %}
+    </div>
+  </div>
+  {% for lane in tl.lanes %}
+  <div style="display:grid;grid-template-columns:150px 1fr;gap:14px;align-items:center;margin-bottom:8px">
+    <div style="font-size:13px;font-weight:700;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ lane.person }} <span class="muted" style="font-weight:600">{{ lane.label }}</span></div>
+    <div style="position:relative;height:22px;background:#fafbfa;border:1px solid var(--line);border-radius:4px;overflow:hidden">
+      {% for b in lane.blocks %}<div title="{{ b.status }} — {{ b.label }} ({{ b.from }} → {{ b.to }})" style="position:absolute;left:{{ b.left }}%;width:{{ b.width }}%;min-width:2px;top:0;bottom:0;background:{{ b.color }}"></div>{% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+  <div style="display:grid;grid-template-columns:150px 1fr;gap:14px">
+    <div></div>
+    <div style="position:relative;height:16px">
+      {% for t in tl.ticks %}<span class="muted" style="position:absolute;white-space:nowrap;left:{{ t.left }}%;{% if loop.last %}transform:translateX(-100%){% elif not loop.first %}transform:translateX(-50%){% endif %}">{{ t.label }}</span>{% endfor %}
+    </div>
+  </div>
+  {% if statuses_seen %}
+  <div class="muted" style="margin-top:12px">{% for s, c in statuses_seen %}<span style="margin-right:12px"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:{{ c }};margin-right:3px"></span>{{ s }}</span>{% endfor %}<span style="margin-right:12px"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:#e2e4e2;margin-right:3px"></span>not being worked</span></div>
+  {% endif %}
+  <div class="muted" style="margin-top:8px">Gaps in a lane are stretches with nobody on it — queued, paused, or waiting.</div>
+</div>
+{% endif %}
+
+<h2>Who worked it, and on what</h2>
+<table>
+<tr><th>Person</th><th>Kind of work</th><th>Time in that status</th><th>Share of the work</th></tr>
+{% for p in people %}{% for s in p.segments %}
+<tr><td>{{ p.person }}</td>
+<td><span class="pill">{{ s.status }}</span></td>
+<td>{{ s.label }}</td>
+<td>{{ s.pct_of_ticket }}%</td></tr>
+{% endfor %}{% else %}<tr><td colspan="4" class="muted">Nobody has had this in a working status yet.</td></tr>{% endfor %}
+</table>
+<div class="muted"><a href="/active-time?{{ back_query }}">← Back to all developers</a></div>
+"""
+
+
+def _active_time_data():
+    import flow_quality as fq
+    project, developer, start, end = parse_filters()
+    issues = _issues(project)
+    win_start = start or (A.now_utc() - dt.timedelta(days=7))
+    win_end = end or A.now_utc()
+    rows = fq.active_time(issues, developer, win_start, win_end, dr.dev_match_exact,
+                          _ids_by_name())
+    return rows, win_start, win_end
+
+
+def _ids_by_name():
+    """Display name -> accountId for everyone in the dataset.
+
+    The dropdown (and an employee's linked developer) identify people by
+    accountId, but the changelog names past assignees without one. Resolving
+    them here is what lets a developer filter still find someone's own work on
+    a ticket they have since handed to somebody else."""
+    import auth
+    return {d["name"]: d["id"] for d in auth.all_developers()}
+
+
+def _status_color(status):
+    """Reuse the app's stage palette so a status keeps the same color it has on
+    Flow and the Release pipeline."""
+    return legacy.STAGE_COLORS.get(legacy.stage_of(status), "#8993a4")
+
+
+def _ownership_timeline(issue, people):
+    """Geometry for the ownership timeline: one swimlane per person, blocks
+    positioned along the ticket's whole life.
+
+    Percent offsets against a common origin (created → resolved/now) mean every
+    lane shares one x-axis, so handoffs line up vertically and the empty
+    stretches — the ticket sitting in a queue or paused, nobody on it — are
+    visible as gaps rather than being closed up the way a stacked bar does."""
+    import flow_quality as fq
+    origin = issue.created
+    finish = issue.resolved or A.now_utc()
+    if not origin or finish <= origin:
+        return None
+    span = (finish - origin).total_seconds()
+
+    def place(a, b):
+        return (round(100 * (a - origin).total_seconds() / span, 3),
+                round(100 * (b - a).total_seconds() / span, 3))
+
+    # Status band: the ticket's whole life, active stretches in their stage
+    # color and everything else muted, so waiting reads at a glance.
+    band = []
+    for status, s_in, s_out in issue.timeline.segments:
+        if s_out <= s_in:
+            continue
+        left, width = place(s_in, s_out)
+        live = st.is_active_status(status)
+        band.append({"left": left, "width": width, "status": status,
+                     "color": _status_color(status) if live else "#e2e4e2",
+                     "active": live, "label": _dur((s_out - s_in).total_seconds())})
+
+    lanes = []
+    for p in people:
+        blocks = [{"left": place(lo, hi)[0], "width": place(lo, hi)[1], "status": status,
+                   "color": _status_color(status),
+                   "label": _dur((hi - lo).total_seconds()),
+                   "from": lo.strftime("%b %-d"), "to": hi.strftime("%b %-d")}
+                  for owner, status, lo, hi in fq.ticket_active_blocks(issue)
+                  if owner == p["person"]]
+        if blocks:
+            lanes.append({"person": p["person"], "label": _dur(p["seconds"]),
+                          "blocks": blocks})
+    # Chronological, not by size: on a shared axis the handoffs then read as a
+    # staircase down the page, which is the whole point of the picture.
+    lanes.sort(key=lambda l: l["blocks"][0]["left"])
+
+    ticks = []
+    for n in range(5):
+        at = origin + dt.timedelta(seconds=span * n / 4)
+        ticks.append({"left": round(100 * n / 4, 2), "label": at.strftime("%b %-d")})
+    return {"band": band, "lanes": lanes, "ticks": ticks}
+
+
+def _ticket_time_view(key):
+    """One ticket's active time split by who owned it. Deliberately the ticket's
+    WHOLE life, not the page's rolling window — the question this answers is
+    "who has worked this ticket", which a 7-day window would silently truncate."""
+    import flow_quality as fq
+    issue, _tl, _rib = _ticket_timeline_data(key)
+    if issue is None:
+        return None, None
+    people = fq.ticket_active_time(issue, ids_by_name=_ids_by_name())
+    total = sum(p["seconds"] for p in people)
+    for p in people:
+        p["segments"] = [
+            {"status": s, "label": _dur(secs), "color": _status_color(s),
+             "pct_of_person": round(100 * secs / p["seconds"], 1),
+             "pct_of_ticket": round(100 * secs / (total or 1), 1)}
+            for s, secs in sorted(p["statuses"].items(), key=lambda kv: -kv[1])]
+    seen = {}
+    for p in people:
+        for s in p["segments"]:
+            seen.setdefault(s["status"], s["color"])
+    created = issue.created
+    elapsed_secs = ((issue.resolved or A.now_utc()) - created).total_seconds() \
+        if created else 0
+    worked = round(100 * total / elapsed_secs) if elapsed_secs else 0
+    worked = max(0, min(worked, 100))
+    return issue, {
+        "people": people, "statuses_seen": sorted(seen.items()),
+        "active_label": _dur(total), "elapsed_label": _dur(elapsed_secs),
+        "logged_label": _dur(fq.logged_seconds(issue)),
+        "worked_pct": worked, "waiting_pct": 100 - worked,
+        # Assignee changes, not ownership spans: the spans include the opening
+        # stretch before anyone touched it, which is not a handoff.
+        "handoffs": len(issue.assignee_events),
+        "tl": _ownership_timeline(issue, people)}
+
+
+@v3.route("/active-time")
+def active_time_screen():
+    key = (request.args.get("key") or "").strip().upper()
+    if key:
+        issue, d = _ticket_time_view(key)
+        if issue is None:
+            return page(TICKET_MISSING_TMPL, active="/active-time",
+                        show_banner=False, key=key)
+        back = "&".join(f"{k}={v}" for k, v in request.args.items() if k != "key")
+        return page(TICKET_TIME_TMPL, active="/active-time", show_banner=False,
+                    issue=issue, back_query=back, **d)
+    rows, win_start, win_end = _active_time_data()
+    label = _window_label(win_start, win_end)
+    by_dev = _group_by_dev(rows, (win_end - win_start).total_seconds())
+    # Bar colour carries the status, so the section needs a key for it — the
+    # per-row status pill was dropped to fit each ticket on one line.
+    seen = {}
+    for r in rows:
+        seen.setdefault(r["issue"].status, _status_color(r["issue"].status))
+    return page(ACTIVE_TIME_TMPL, active="/active-time", show_banner=False,
+                rows=rows, by_dev=by_dev, dur=_dur, window_label=label,
+                statuses_seen=sorted(seen.items()))
+
+
+@v3.route("/api/v2/active-time.csv")
+def active_time_csv():
+    rows, _start, _end = _active_time_data()
+    out = [[r["issue"].key, r["issue"].summary, r["developer"],
+            round(r["active_seconds"] / 3600, 1), round(r["logged_seconds"] / 3600, 1),
+            r["issue"].status] for r in rows]
+    return csv_response(["Issue", "Summary", "Developer",
+                         "Hours in a working status (elapsed)", "Logged effort hours",
+                         "Current status"], out, "active_time.csv")
 
 
 # ---------------------------------------------------------------------------

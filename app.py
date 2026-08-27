@@ -74,6 +74,11 @@ _ADMIN_PREFIXES = ("/settings", "/admin", "/my-day/rollup", "/my-day/feed")
 # /my-day/feed still fall under _ADMIN_PREFIXES above, so they stay admin-only
 # even though they match here. /api/v2/ticket-history backs the Release
 # timeline's per-ticket history popup.
+# Active Time stays admin-only while it is still being evaluated. The
+# per-employee scoping is already built (parse_filters pins a non-admin to
+# their linked developer regardless of any ?developer= in the URL), so opening
+# it up later means adding "/active-time" and "/api/v2/active-time.csv" here
+# and to the employee nav list in screens_web.page().
 _EMPLOYEE_PREFIXES = ("/my-day", "/release", "/api/v2/ticket-history",
                       "/change-password", "/logout")
 

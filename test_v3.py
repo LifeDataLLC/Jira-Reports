@@ -335,6 +335,375 @@ def test_flow_quality():
                                         for i in range(len(b)-1)))
 
 
+def test_active_time():
+    """Active Time page's core metric: active-status seconds per (developer,
+    ticket) inside a window. 'Active' = st.is_active_status(), the literal
+    "someone is on it right now" set — narrower than the cycle-time stage
+    bucket (fq.bottleneck's world) — and that distinction is the whole point
+    of the feature, so the queued-status case below is the important check."""
+    import dev_reports as dr
+    import flow_quality as fq
+    start, end = now - dt.timedelta(days=7), now
+
+    # Entered Development 10 days ago, never left -> clipped to the window
+    # length (7 days), not the full 10 it's actually been there.
+    open_ended = mkraw("AT-1", "Development / In Design", "In Progress", created_d=20, events=[
+        (10, "Jane Doe", "status", "To Do", "Development / In Design")])
+
+    # Two different active statuses back to back inside the window -> summed
+    # (3 days dev + 2 days QA = 5 days), not just the most recent one.
+    two_active = mkraw("AT-2", "In QA Testing (QA Env)", "In Progress", assignee="Sam Lee",
+                       created_d=20, events=[
+        (5, "Sam Lee", "status", "To Do", "Development / In Design"),
+        (2, "Sam Lee", "status", "Development / In Design", "In QA Testing (QA Env)")])
+
+    # Paused for the middle 3 days of the window -> only the 2+1 dev days
+    # on either side count.
+    paused = mkraw("AT-3", "Development / In Design", "In Progress", assignee="Sam Lee",
+                   created_d=20, events=[
+        (6, "Sam Lee", "status", "To Do", "Development / In Design"),
+        (4, "Sam Lee", "status", "Development / In Design", "Pause Development / Design"),
+        (1, "Sam Lee", "status", "Pause Development / Design", "Development / In Design")])
+
+    # Sitting in a hand-off/queue status the whole window: it's an
+    # ACTIVE_STAGES stage (cycle-time still counts it), but NOT in
+    # is_active_status -> must show zero here, not just "less than AT-1".
+    queued = mkraw("AT-4", "Ready for QA (QA Env)", "To Do", assignee="Jane Doe",
+                   created_d=20, events=[
+        (12, "Jane Doe", "status", "Development / In Design", "Ready for QA (QA Env)")])
+
+    # Same shape as AT-1, but the developer is hidden -> excluded entirely.
+    ghost = mkraw("AT-5", "Development / In Design", "In Progress", assignee="Ghost Dev",
+                  created_d=20, events=[
+        (10, "Ghost Dev", "status", "To Do", "Development / In Design")])
+
+    s = st.load()
+    prior_hidden = s.get("hidden_developers", [])
+    s["hidden_developers"] = prior_hidden + ["ghostdev"]
+    st.save(s)
+    try:
+        issues = dr.load_dev_issues([open_ended, two_active, paused, queued, ghost])
+        rows = fq.active_time(issues, start=start, end=end, match=dr.dev_match_exact)
+    finally:
+        s = st.load()
+        s["hidden_developers"] = prior_hidden
+        st.save(s)
+
+    by_key = {r["issue"].key: r for r in rows}
+    check("open-ended clipped to window length", abs(by_key["AT-1"]["active_seconds"] / 3600 - 168) < 1)
+    check("two active statuses summed", abs(by_key["AT-2"]["active_seconds"] / 3600 - 120) < 1)
+    check("paused segment excluded", abs(by_key["AT-3"]["active_seconds"] / 3600 - 72) < 1)
+    check("queue status (not is_active_status) shows zero", "AT-4" not in by_key)
+    check("hidden developer excluded", "AT-5" not in by_key)
+    check("rows sorted by active time desc", all(
+        rows[i]["active_seconds"] >= rows[i + 1]["active_seconds"] for i in range(len(rows) - 1)))
+
+
+def test_elapsed_and_effort_stay_separate():
+    """Elapsed time in a working status and booked worklog effort are different
+    numbers answering different questions, and the screens must never let one
+    stand in for the other: a ticket can sit in Development for a week while
+    someone books four hours against it."""
+    import dev_reports as dr
+    import flow_quality as fq
+    start, end = now - dt.timedelta(days=7), now
+
+    raw = mkraw("EF-1", "Development / In Design", "In Progress", assignee="Jane Doe",
+                created_d=20, events=[
+                    (10, "Jane Doe", "status", "To Do", "Development / In Design")],
+                worklogs=[(5, "Jane Doe", 4 * 3600, "actual work"),
+                          (2, "Sam Lee", 2 * 3600, "helped out"),
+                          (30, "Jane Doe", 9 * 3600, "long before the window")])
+    issue = dr.load_dev_issues([raw])[0]
+
+    row = fq.active_time([issue], start=start, end=end, match=dr.dev_match_exact)[0]
+    check("elapsed is the full window, not the effort",
+          abs(row["active_seconds"] / 3600 - 168) < 1)
+    check("effort counts only this person's worklogs in the window",
+          abs(row["logged_seconds"] / 3600 - 4) < 0.01)
+    check("elapsed and effort are different numbers",
+          row["active_seconds"] != row["logged_seconds"])
+
+    check("ticket-wide effort spans everyone, whole life",
+          abs(fq.logged_seconds(issue) / 3600 - 15) < 0.01)
+    check("windowed ticket-wide effort excludes the old worklog",
+          abs(fq.logged_seconds(issue, start=start, end=end) / 3600 - 6) < 0.01)
+    check("effort filtered by person",
+          abs(fq.logged_seconds(issue, "Sam Lee", "samlee") / 3600 - 2) < 0.01)
+
+    # No worklogs at all must read as "none booked", never as zero effort
+    # dressed up as a real measurement.
+    bare = dr.load_dev_issues([mkraw(
+        "EF-2", "Development / In Design", "In Progress", created_d=20, events=[
+            (10, "Jane Doe", "status", "To Do", "Development / In Design")])])[0]
+    check("no worklogs yields zero, not a crash", fq.logged_seconds(bare) == 0)
+
+    import screens_web as sw
+    check("zero effort renders as an em dash, not '0h'", sw._dur(0) == "—")
+    check("durations read as days once past a day", sw._dur(168 * 3600) == "7d")
+    check("short durations stay in hours", sw._dur(5 * 3600) == "5h")
+    check("sub-hour durations stay in minutes", sw._dur(20 * 60) == "20m")
+    check("day and hour remainder", sw._dur((48 + 3) * 3600) == "2d 3h")
+    # Clock drift makes summed windows land a hair under a whole number of
+    # days; the remainder must carry instead of rendering "6d 24h".
+    check("rounding carries into days", sw._dur(168 * 3600 - 4) == "7d")
+
+
+def test_long_ticket_list_stays_readable():
+    """A developer can easily touch 14 tickets in a week. The per-person list
+    has to stay scannable, and the shared bar scale only works if the visible
+    rows are of comparable size — so the cut follows the data, not a fixed row
+    count."""
+    import screens_web as sw
+
+    def split(*seconds):
+        ts = [{"active_seconds": s} for s in seconds]
+        return sw._split_head_tail(ts, sum(seconds))
+
+    h, t = split(*([70 * 3600, 30 * 3600] + [3600] * 12))
+    check("a concentrated week collapses to the few that mattered",
+          len(h) == 3 and len(t) == 11)
+
+    h, t = split(*([4 * 3600] * 14))
+    check("an evenly fragmented week shows more, capped", len(h) == 8 and len(t) == 6)
+
+    h, t = split(5 * 3600, 3 * 3600, 1 * 3600)
+    check("a short list is never collapsed", len(h) == 3 and not t)
+
+    h, t = split(10 * 3600, 8 * 3600, 6 * 3600, 3600)
+    check("a tail of one is absorbed rather than hidden behind a click",
+          len(h) == 4 and not t)
+
+    h, t = split(8 * 3600)
+    check("a single ticket needs no tail", len(h) == 1 and not t)
+
+    # Head and tail must together account for everything — a ticket silently
+    # falling out of both would be worse than a long page.
+    for case in ([70 * 3600, 30 * 3600] + [3600] * 12, [4 * 3600] * 14):
+        h, t = split(*case)
+        check("every ticket lands in head or tail", len(h) + len(t) == len(case))
+
+    # End to end: 14 tickets render a folded tail, and the hidden ones are
+    # still reachable in the markup rather than dropped.
+    import app
+    import jira_client as jc
+    raws = [mkraw(f"LT-{n:02d}", "Development / In Design", "In Progress",
+                  assignee="Marcus Chen", created_d=30,
+                  events=[((70 if n == 0 else 0.2), "Marcus Chen", "status",
+                           "To Do", "Development / In Design")])
+            for n in range(14)]
+    jc.fetch_dev_dataset = lambda project=None, lookback_days=None: raws
+    jc.detect_custom_fields = lambda: {"story_points": None, "sprint": None, "start_date": None}
+    jc.report_projects = lambda: [{"key": "LIFEDATAV2", "name": "LIFEDATAV2"}]
+    jc.report_project_keys = lambda: ["LIFEDATAV2"]
+    jc.configured_projects = lambda: ["LIFEDATAV2"]
+    html = login_admin(app.app.test_client()).get("/active-time").get_data(as_text=True)
+    check("the tail is folded behind a disclosure", "more tickets" in html)
+    check("folded tickets are still in the page, not dropped",
+          all(f"LT-{n:02d}" in html for n in range(14)))
+    check("every ticket still appears in the table", html.count("LT-13") >= 1)
+
+
+def test_roles_on_active_time():
+    """Active Time is admin-only while it is still being evaluated: an admin
+    picks any developer or all of them, and an employee cannot reach the page,
+    its CSV, or a nav link to it.
+
+    The per-employee scoping it would need already exists in parse_filters, so
+    opening this up later is a two-line change — these checks are what would
+    have to flip when that happens."""
+    import app
+    import auth
+    import jira_client as jc
+
+    raws = [
+        mkraw("RL-1", "Development / In Design", "In Progress", assignee="Jane Doe",
+              created_d=20, events=[(5, "Jane Doe", "status", "To Do", "Development / In Design")]),
+        mkraw("RL-2", "Development / In Design", "In Progress", assignee="Sam Lee",
+              created_d=20, events=[(4, "Sam Lee", "status", "To Do", "Development / In Design")]),
+        # Jane held this one first, then handed it to Sam — Jane must still see
+        # her own stretch even though the ticket is no longer hers. This is the
+        # case that breaks if past owners are left without an accountId.
+        mkraw("RL-3", "Development / In Design", "In Progress", assignee="Sam Lee",
+              created_d=20, events=[
+                  (6, "Jane Doe", "status", "To Do", "Development / In Design"),
+                  (3, "Jane Doe", "assignee", "Jane Doe", "Sam Lee")]),
+    ]
+    jc.fetch_dev_dataset = lambda project=None, lookback_days=None: raws
+    jc.detect_custom_fields = lambda: {"story_points": None, "sprint": None, "start_date": None}
+    jc.report_projects = lambda: [{"key": "LIFEDATAV2", "name": "LIFEDATAV2"}]
+    jc.report_project_keys = lambda: ["LIFEDATAV2"]
+    jc.configured_projects = lambda: ["LIFEDATAV2"]
+
+    def body(html):
+        """Content below the filter bar. The developer dropdown lists everyone
+        an admin may pick, so asserting against the whole page would match an
+        <option> rather than the data."""
+        return html.split("Each ticket, by person", 1)[-1]
+
+    admin = login_admin(app.app.test_client())
+    h = admin.get("/active-time").get_data(as_text=True)
+    check("admin sees every developer", "Jane Doe" in body(h) and "Sam Lee" in body(h))
+    check("admin nav offers Active Time", "/active-time" in h)
+
+    one = body(admin.get("/active-time?developer=jane%20doe").get_data(as_text=True))
+    check("admin can narrow to one developer", "Jane Doe" in one and "Sam Lee" not in one)
+    check("admin can widen back to everyone",
+          "Sam Lee" in body(admin.get("/active-time").get_data(as_text=True)))
+
+    # Filtering by accountId (what the dropdown actually submits) must find the
+    # same work as filtering by name. RL-3 is the case that breaks without it:
+    # Jane worked it and handed it to Sam, so she is only ever a past owner
+    # there, and past owners carry no accountId of their own in the changelog.
+    jane_id = next(d["id"] for d in auth.all_developers() if d["name"] == "Jane Doe")
+    by_id = body(admin.get(f"/active-time?developer={jane_id}").get_data(as_text=True))
+    check("accountId filter finds work on a ticket since handed off",
+          "RL-1" in by_id and "RL-3" in by_id)
+    check("accountId filter excludes the colleague's own ticket", "RL-2" not in by_id)
+
+    # Active Time is admin-only for now: employees must not reach the page or
+    # its CSV, and must not be offered it in the nav.
+    emp = app.app.test_client()
+    emp.post("/register", data={"email": "jane@lifedatacorp.com", "password": "secret123",
+                                "developer_id": jane_id, "developer_name": "Jane Doe"})
+    u = auth.get_user("jane@lifedatacorp.com")
+    check("employee registered and linked",
+          u and u["role"] != "admin" and u.get("developer_id") == jane_id)
+
+    r = emp.get("/active-time")
+    check("employee is redirected away from Active Time", r.status_code in (301, 302))
+    check("employee redirect lands on My Day", "/my-day" in r.headers.get("Location", ""))
+    check("employee cannot pull the CSV either",
+          emp.get("/api/v2/active-time.csv").status_code in (301, 302))
+    check("employee nav does not offer Active Time",
+          "/active-time" not in emp.get("/my-day").get_data(as_text=True))
+    check("employee still blocked from Flow",
+          emp.get("/flow").status_code in (301, 302))
+    check("employee keeps the screens they already had",
+          emp.get("/my-day").status_code == 200)
+
+
+def test_ticket_active_time_by_person():
+    """The ticket view's metric: a ticket that changed hands splits its active
+    time between the people who actually held it, instead of dumping all of it
+    on whoever happens to be assigned now."""
+    import dev_reports as dr
+    import flow_quality as fq
+
+    # In Development for 15 days straight. Alice held it for the first 5,
+    # Bob for the last 10. Bob is the current assignee.
+    handoff = dr.load_dev_issues([mkraw(
+        "HO-1", "Development / In Design", "In Progress", assignee="Bob Second",
+        created_d=20, events=[
+            (15, "Alice First", "status", "To Do", "Development / In Design"),
+            (10, "Alice First", "assignee", "Alice First", "Bob Second")])])[0]
+
+    people = {p["person"]: p for p in fq.ticket_active_time(handoff)}
+    check("both owners credited", set(people) == {"Alice First", "Bob Second"})
+    check("first owner gets their stretch", abs(people["Alice First"]["hours"] - 120) < 1)
+    check("current assignee gets only theirs", abs(people["Bob Second"]["hours"] - 240) < 1)
+    check("shares sum to 100", abs(sum(p["pct"] for p in people.values()) - 100) < 0.2)
+    check("per-status split kept",
+          "Development / In Design" in people["Alice First"]["statuses"])
+    check("only current assignee carries an id",
+          people["Bob Second"]["person_id"] == "bobsecond"
+          and people["Alice First"]["person_id"] == "")
+
+    # The roster view must agree with the ticket view for the same ticket —
+    # two views of one number disagreeing is worse than either being absent.
+    roster = {r["developer"]: r for r in
+              fq.active_time([handoff], match=dr.dev_match_exact)}
+    check("roster splits the same way", set(roster) == {"Alice First", "Bob Second"}
+          and abs(roster["Alice First"]["active_seconds"]
+                  - people["Alice First"]["seconds"]) < 1)
+
+    # Ownership spans must tile the whole life even when the ticket spent time
+    # unassigned, or the intersection silently loses that time.
+    orphan = dr.load_dev_issues([mkraw(
+        "HO-2", "Development / In Design", "In Progress", assignee="Bob Second",
+        created_d=20, events=[
+            (15, "Alice First", "status", "To Do", "Development / In Design"),
+            (12, "Alice First", "assignee", "Alice First", ""),
+            (6, "Bob Second", "assignee", "", "Bob Second")])])[0]
+    spans = fq.ownership_spans(orphan)
+    check("spans tile without gaps", all(spans[i][2] == spans[i + 1][1]
+                                         for i in range(len(spans) - 1)))
+    names = {p["person"] for p in fq.ticket_active_time(orphan)}
+    check("unassigned stretch kept, not dropped", "Unassigned" in names)
+    total = sum(p["seconds"] for p in fq.ticket_active_time(orphan))
+    check("split conserves the ticket's total active time",
+          abs(total / 3600 - 360) < 1)
+
+    # Blocks are the shared primitive: the per-person totals must be exactly
+    # the sum of the blocks drawn on the timeline, or the picture and the
+    # numbers on the same page would disagree.
+    blocks = fq.ticket_active_blocks(handoff)
+    check("blocks in time order", all(blocks[i][2] <= blocks[i + 1][2]
+                                      for i in range(len(blocks) - 1)))
+    per_block = {}
+    for owner, _s, lo, hi in blocks:
+        per_block[owner] = per_block.get(owner, 0) + (hi - lo).total_seconds()
+    check("blocks reconcile with totals", all(
+        abs(per_block[p["person"]] - p["seconds"]) < 1 for p in people.values()))
+
+
+def test_ownership_timeline_geometry():
+    """The ownership timeline's positioning: every lane shares one origin, so
+    handoffs must line up vertically and the status band must tile the ticket's
+    whole life without gaps or overflow."""
+    import dev_reports as dr
+    import screens_web as sw
+
+    # 40-day life: 10d To Do, then 18d Development, then 12d QA. Alice holds it
+    # until day 22, Marcus until day 6, Priya to now.
+    issue = dr.load_dev_issues([mkraw(
+        "TL-1", "In QA Testing (QA Env)", "In Progress", assignee="Priya Nair",
+        created_d=40, events=[
+            (30, "Alice Wong", "status", "To Do", "Development / In Design"),
+            (22, "Alice Wong", "assignee", "Alice Wong", "Marcus Chen"),
+            (12, "Marcus Chen", "status", "Development / In Design", "In QA Testing (QA Env)"),
+            (6, "Marcus Chen", "assignee", "Marcus Chen", "Priya Nair")])])[0]
+
+    import flow_quality as fq
+    tl = sw._ownership_timeline(issue, fq.ticket_active_time(issue))
+    check("timeline built", tl is not None)
+
+    band = tl["band"]
+    check("band starts at the origin", abs(band[0]["left"]) < 0.01)
+    check("band tiles the whole life without gaps", all(
+        abs((band[i]["left"] + band[i]["width"]) - band[i + 1]["left"]) < 0.01
+        for i in range(len(band) - 1)))
+    check("band ends exactly at 100%",
+          abs((band[-1]["left"] + band[-1]["width"]) - 100) < 0.01)
+    check("queue stretch drawn muted, active stretches colored",
+          band[0]["active"] is False and band[1]["active"] is True)
+
+    lanes = {l["person"]: l for l in tl["lanes"]}
+    check("one lane per person who held it",
+          set(lanes) == {"Alice Wong", "Marcus Chen", "Priya Nair"})
+    # Handoff continuity: where one person's last block ends, the next person's
+    # first block begins — the property that makes the picture readable.
+    a_end = lanes["Alice Wong"]["blocks"][-1]
+    m_start = lanes["Marcus Chen"]["blocks"][0]
+    check("handoff lines up vertically",
+          abs((a_end["left"] + a_end["width"]) - m_start["left"]) < 0.01)
+    check("no block escapes the axis", all(
+        b["left"] >= -0.01 and b["left"] + b["width"] <= 100.01
+        for l in tl["lanes"] for b in l["blocks"]))
+    check("axis labelled end to end", len(tl["ticks"]) == 5
+          and tl["ticks"][0]["left"] == 0 and tl["ticks"][-1]["left"] == 100)
+    # Lanes read chronologically (a staircase), not biggest-first — Marcus has
+    # the most hours but picked the ticket up second.
+    check("lanes ordered chronologically",
+          [l["person"] for l in tl["lanes"]] == ["Alice Wong", "Marcus Chen", "Priya Nair"])
+
+    # A ticket with no elapsed time must not divide by zero.
+    instant = dr.load_dev_issues([mkraw("TL-2", "To Do", "To Do", created_d=0)])[0]
+    instant.created = instant.resolved = None
+    check("degenerate ticket returns no timeline",
+          sw._ownership_timeline(instant, []) is None)
+
+
 # ---------------------------------------------------------------------------
 # Phase 4 — gated attention date rules
 # ---------------------------------------------------------------------------
