@@ -211,6 +211,83 @@ def active_time(issues, developer=None, start=None, end=None, match=None,
     return rows
 
 
+def _merge_intervals(intervals):
+    """Merge overlapping/touching (start, end) tuples into a disjoint,
+    time-ordered list. The building block for de-duplicating a developer's
+    time across tickets that were active at once."""
+    if not intervals:
+        return []
+    ivs = sorted(intervals, key=lambda iv: iv[0])
+    merged = [ivs[0]]
+    for lo, hi in ivs[1:]:
+        m_lo, m_hi = merged[-1]
+        if lo <= m_hi:
+            if hi > m_hi:
+                merged[-1] = (m_lo, hi)
+        else:
+            merged.append((lo, hi))
+    return merged
+
+
+def dev_time_totals(issues, developer=None, start=None, end=None, match=None,
+                    ids_by_name=None) -> dict:
+    """Per-developer active time inside [start, end): {name: {...}}.
+
+    `raw_seconds` is the naive sum of each ticket's active-status elapsed time
+    — the same number `active_time()` reports per ticket, added up. It double
+    -counts any stretch where 2+ of a developer's tickets were active at once
+    (e.g. one ticket left in "Development" while a second is picked up).
+    `dedup_seconds` merges that developer's intervals across ALL their tickets
+    and sums the union, crediting at most one ticket per instant — the
+    "actually worked" figure. `inflated_seconds` is the gap between them: how
+    much of the raw total was double-counted overlap. By construction
+    raw = dedup + inflated.
+
+    Pass `developer`+`match` to scope to one person (e.g. a dev's own
+    dashboard) without paying for the rest of the team's interval math."""
+    per_person = {}
+    for i in issues:
+        for owner, _status, lo, hi in ticket_active_blocks(i, start, end):
+            pid = ((ids_by_name or {}).get(owner)
+                  or (i.assignee_id if owner == i.assignee else ""))
+            if developer and match and not match(developer, owner, pid):
+                continue
+            if st.is_developer_hidden(owner, pid):
+                continue
+            d = per_person.setdefault(owner, {"person_id": pid, "intervals": []})
+            if not d["person_id"]:
+                d["person_id"] = pid
+            d["intervals"].append((lo, hi))
+    out = {}
+    for name, d in per_person.items():
+        raw = sum((hi - lo).total_seconds() for lo, hi in d["intervals"])
+        dedup = sum((hi - lo).total_seconds() for lo, hi in _merge_intervals(d["intervals"]))
+        out[name] = {"developer": name, "developer_id": d["person_id"],
+                     "raw_seconds": raw, "dedup_seconds": dedup,
+                     "inflated_seconds": max(raw - dedup, 0)}
+    return out
+
+
+def top_tickets(issues, start=None, end=None, limit=10) -> list[dict]:
+    """Tickets ranked by total active-status time in the window, summed across
+    everyone who worked them.
+
+    Unlike a developer's total, a ticket's total has no concurrency to
+    de-duplicate: ownership_spans partitions a ticket's life into non
+    -overlapping stretches by construction (it comes from a sequential
+    assignee changelog), so simply summing every block's duration is already
+    the ticket's true elapsed active time."""
+    totals = {}
+    for i in issues:
+        blocks = ticket_active_blocks(i, start, end)
+        secs = sum((hi - lo).total_seconds() for _o, _s, lo, hi in blocks)
+        if secs > 0:
+            totals[i.key] = {"issue": i, "seconds": secs,
+                             "people": len({o for o, _s, _lo, _hi in blocks})}
+    rows = sorted(totals.values(), key=lambda r: -r["seconds"])
+    return rows[:limit]
+
+
 def bottleneck(issues) -> list[dict]:
     """FR-F3: median days per status across tickets (only statuses with data)."""
     per_status = {}

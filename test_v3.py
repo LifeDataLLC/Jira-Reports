@@ -399,6 +399,112 @@ def test_active_time():
         rows[i]["active_seconds"] >= rows[i + 1]["active_seconds"] for i in range(len(rows) - 1)))
 
 
+def test_concurrency_dedup_and_top_tickets():
+    """The Time Spent dashboard's core new math: a developer's raw time (sum
+    across tickets) vs. their de-duplicated time (max one ticket credited per
+    instant) vs. the inflation between them. Verified against the exact case
+    from the spec: 3 tickets active at once for 6h each is 18h raw, 6h real,
+    12h inflated."""
+    import dev_reports as dr
+    import flow_quality as fq
+
+    check("no overlap", fq._merge_intervals([]) == [])
+    check("disjoint intervals stay separate",
+          fq._merge_intervals([(1, 2), (3, 4)]) == [(1, 2), (3, 4)])
+    check("overlapping intervals merge",
+          fq._merge_intervals([(1, 5), (3, 7)]) == [(1, 7)])
+    check("touching intervals merge (no gap between them)",
+          fq._merge_intervals([(1, 3), (3, 5)]) == [(1, 5)])
+    check("merges regardless of input order",
+          fq._merge_intervals([(5, 7), (1, 3), (2, 6)]) == [(1, 7)])
+    check("one interval nested inside another collapses to the outer one",
+          fq._merge_intervals([(1, 10), (3, 4)]) == [(1, 10)])
+
+    # 3 tickets, all opened at once, all still active -> fully overlapping.
+    concurrent = dr.load_dev_issues([mkraw(
+        f"CC-{n}", "Development / In Design", "In Progress", assignee="Sam Lee",
+        created_d=10, events=[(0.25, "Sam Lee", "status", "To Do",
+                               "Development / In Design")]) for n in range(3)])
+    totals = fq.dev_time_totals(concurrent, start=now - dt.timedelta(days=7), end=now)
+    sam = totals["Sam Lee"]
+    check("raw sums all three tickets (~18h)", abs(sam["raw_seconds"] / 3600 - 18) < 0.2)
+    check("dedup caps it at one ticket's worth (~6h)",
+          abs(sam["dedup_seconds"] / 3600 - 6) < 0.2)
+    check("inflated is exactly the overlap (~12h)",
+          abs(sam["inflated_seconds"] / 3600 - 12) < 0.2)
+    check("raw = dedup + inflated, always",
+          abs(sam["raw_seconds"] - (sam["dedup_seconds"] + sam["inflated_seconds"])) < 1)
+
+    # Two tickets worked back to back, no overlap -> no inflation at all.
+    sequential = dr.load_dev_issues([
+        mkraw("SQ-1", "Done", "Done", assignee="Jane Doe", created_d=10, events=[
+            (6, "Jane Doe", "status", "To Do", "Development / In Design"),
+            (4, "Jane Doe", "status", "Development / In Design", "Done")]),
+        mkraw("SQ-2", "Done", "Done", assignee="Jane Doe", created_d=10, events=[
+            (3, "Jane Doe", "status", "To Do", "Development / In Design"),
+            (1, "Jane Doe", "status", "Development / In Design", "Done")])])
+    jane = fq.dev_time_totals(sequential, start=now - dt.timedelta(days=7), end=now)["Jane Doe"]
+    check("sequential work has zero inflation", jane["inflated_seconds"] < 1)
+    check("raw equals dedup when nothing overlapped",
+          abs(jane["raw_seconds"] - jane["dedup_seconds"]) < 1)
+
+    # Scoping to one developer must not pull in someone else's overlap.
+    mixed = concurrent + sequential
+    scoped = fq.dev_time_totals(mixed, developer="Jane Doe",
+                                start=now - dt.timedelta(days=7), end=now,
+                                match=dr.dev_match_exact)
+    check("scoping to one developer excludes the rest", set(scoped) == {"Jane Doe"})
+
+    # Top tickets: ranked by total elapsed time regardless of who worked it,
+    # and a handoff ticket sums correctly rather than splitting into two rows.
+    handoff = mkraw("TT-1", "In QA Testing (QA Env)", "In Progress", assignee="Bob",
+                    created_d=10, events=[
+                        (6, "Alice", "status", "To Do", "Development / In Design"),
+                        (3, "Alice", "assignee", "Alice", "Bob")])
+    solo = mkraw("TT-2", "Development / In Design", "In Progress", assignee="Alice",
+                created_d=10, events=[(1, "Alice", "status", "To Do", "Development / In Design")])
+    top = fq.top_tickets(dr.load_dev_issues([handoff, solo]),
+                         start=now - dt.timedelta(days=7), end=now)
+    check("ranked with the busiest ticket first", top[0]["issue"].key == "TT-1")
+    check("handoff ticket is one row, summed across both owners",
+          abs(top[0]["seconds"] / 3600 - 144) < 1 and top[0]["people"] == 2)
+    check("solo ticket totals correctly", abs(top[1]["seconds"] / 3600 - 24) < 1
+          and top[1]["people"] == 1)
+    check("limit is respected",
+          len(fq.top_tickets(dr.load_dev_issues([handoff, solo]), limit=1)) == 1)
+
+
+def test_developer_directory_includes_past_only_owners():
+    """A developer whose only visible work is a ticket they've since handed
+    off is never the CURRENT assignee of anything — auth.all_developers()
+    (current assignees only) would never know they exist. The Time-Spent
+    Dashboards' own directory must still find them, or their "Jump to a
+    developer" button and their own dashboard link could never be built."""
+    import dev_reports as dr
+    import jira_client as jc
+    import screens_web as sw
+
+    raw = mkraw("PD-1", "In QA Testing (QA Env)", "In Progress", assignee="Bob Second",
+               created_d=20, events=[
+                   (15, "Alice First", "status", "To Do", "Development / In Design"),
+                   (10, "Alice First", "assignee", "Alice First", "Bob Second")])
+    handed_off = dr.load_dev_issues([raw])
+    jc.fetch_dev_dataset = lambda project=None, lookback_days=None: [raw]
+    jc.detect_custom_fields = lambda: {"story_points": None, "sprint": None, "start_date": None}
+
+    ids = sw._ids_by_name()
+    check("a past-only owner's id is resolved from her status-change authorship",
+          ids.get("Alice First") == "alicefirst")
+
+    directory = sw._developer_directory(handed_off, ids)
+    check("the past-only owner appears in the directory",
+          "Alice First" in directory.values())
+    check("the current assignee appears too",
+          "Bob Second" in directory.values())
+    check("she is keyed by the resolved id, not a name fallback",
+          directory.get("alicefirst") == "Alice First")
+
+
 def test_elapsed_and_effort_stay_separate():
     """Elapsed time in a working status and booked worklog effort are different
     numbers answering different questions, and the screens must never let one
@@ -449,59 +555,70 @@ def test_elapsed_and_effort_stay_separate():
     check("rounding carries into days", sw._dur(168 * 3600 - 4) == "7d")
 
 
-def test_window_boxes_name_what_is_shown():
-    """The Start/End boxes must always describe the window on screen, and
-    re-submitting them unchanged must land on exactly the same range — a
-    default that only lived in the code, leaving the boxes blank, is what this
-    replaces."""
+def test_dev_dashboard_range_control():
+    """The dev dashboard's 7/14/30/Custom control: presets need no date boxes
+    (the pill label already names the window), but Custom's date inputs must
+    always show exactly the range on screen, and re-submitting them unchanged
+    must land on the identical window — the same principle the roster page's
+    date boxes follow, applied to this page's own control."""
     import re
 
     import app
     import jira_client as jc
     import screens_web as sw
 
-    raws = [mkraw("WN-1", "Development / In Design", "In Progress", created_d=40,
-                  events=[(20, "Jane Doe", "status", "To Do", "Development / In Design")])]
+    raws = [mkraw("WN-1", "Development / In Design", "In Progress", assignee="Jane Doe",
+                  created_d=40, events=[(20, "Jane Doe", "status", "To Do",
+                                         "Development / In Design")])]
     jc.fetch_dev_dataset = lambda project=None, lookback_days=None: raws
     jc.detect_custom_fields = lambda: {"story_points": None, "sprint": None, "start_date": None}
     jc.report_projects = lambda: [{"key": "LIFEDATAV2", "name": "LIFEDATAV2"}]
     jc.report_project_keys = lambda: ["LIFEDATAV2"]
     jc.configured_projects = lambda: ["LIFEDATAV2"]
     c = login_admin(app.app.test_client())
+    import auth
+    dev_id = next(d["id"] for d in auth.all_developers() if d["name"] == "Jane Doe")
 
-    def boxes(url):
-        h = c.get(url).get_data(as_text=True)
-        return (re.search(r'name="start" value="([^"]*)"', h).group(1),
-                re.search(r'name="end" value="([^"]*)"', h).group(1), h)
+    def get(qs=""):
+        return c.get(f"/active-time?dev={dev_id}{qs}").get_data(as_text=True)
 
-    s, e, h = boxes("/active-time")
-    check("start box is filled in on a defaulted view", bool(s))
-    check("end box is filled in on a defaulted view", bool(e))
-    check("default window is named as a week", "past 7 days" in h)
-    check("default window really spans 7 days",
-          (dt.date.fromisoformat(e) - dt.date.fromisoformat(s)).days == 6)
-    check("default window ends today", dt.date.fromisoformat(e) == A.now_utc().date())
+    h = get()
+    check("default range is 7 days", "past 7 days" in h)
+    check("no developer selector on the dev dashboard", "name=\"developer\"" not in h)
+    check("project selector is present", "name=\"project\"" in h)
+    check("presets show no date inputs", 'name="start"' not in h.split("Tickets worked")[0]
+          or 'type="date"' not in h.split("Tickets worked")[0])
 
-    # Feeding the shown dates straight back must not shift the range.
-    s2, e2, _ = boxes(f"/active-time?start={s}&end={e}")
-    check("dates round-trip unchanged", (s2, e2) == (s, e))
+    h14 = get("&range=14d")
+    check("switching preset updates the label", "past 14 days" in h14)
+    check("switching preset marks the right pill active",
+          re.search(r'pill ok" href="\?[^"]*range=14d', h14))
 
-    s3, e3, h3 = boxes("/active-time?start=2026-08-01&end=2026-08-10")
-    check("an explicit range is echoed exactly", (s3, e3) == ("2026-08-01", "2026-08-10"))
-    # end is exclusive internally; the label must still name the last day the
-    # page actually covers, not the day after it.
+    hc = get("&range=custom&start=2026-08-01&end=2026-08-10")
+    check("custom start box echoes exactly", 'name="start" value="2026-08-01"' in hc)
+    check("custom end box echoes exactly", 'name="end" value="2026-08-10"' in hc)
+    # end is exclusive internally; the label must name the last day the page
+    # actually covers, not the day after it.
     check("label names the last day included, not the day after",
-          "Aug 1 → Aug 10" in h3 and "Aug 11" not in h3)
+          "Aug 1 → Aug 10" in hc and "Aug 11" not in hc)
 
-    win = sw._resolve_window(*(lambda a, b: (a, b))(None, None))
-    check("resolved default window is midnight aligned",
-          win[0].hour == 0 and win[1].hour == 0)
-    check("a single-day range reads as one day",
-          "on Aug 5" in boxes("/active-time?start=2026-08-05&end=2026-08-05")[2])
+    hc2 = get("&range=custom&start=2026-08-05&end=2026-08-05")
+    check("a single-day custom range reads as one day", "on Aug 5" in hc2)
 
-    # Screens with their own defaults must keep their existing blank boxes.
-    fs, fe, _ = boxes("/flow")
-    check("other screens' date boxes are untouched", fs == "" and fe == "")
+    start, end, key = sw._resolve_range("7d")
+    check("resolved default window is midnight aligned", start.hour == 0 and end.hour == 0)
+    check("7d really spans 7 days", (end - start).days == 7)
+    check("unknown range key falls back to the default", key == "7d")
+    cstart, cend, ckey = sw._resolve_range("custom", "2026-08-01", "2026-08-10")
+    check("custom end is exclusive (spans the 10th fully)",
+          cend == dt.datetime(2026, 8, 11, tzinfo=dt.timezone.utc) and ckey == "custom")
+
+    check("_dash_link preserves dev/project across a range switch",
+          sw._dash_link(dev_id, "LIFEDATAV2", "30d") ==
+          f"dev={dev_id}&project=LIFEDATAV2&range=30d")
+    check("_dash_link carries custom dates only when given",
+          sw._dash_link(dev_id, "LIFEDATAV2", "custom", "2026-08-01", "2026-08-10") ==
+          f"dev={dev_id}&project=LIFEDATAV2&range=custom&start=2026-08-01&end=2026-08-10")
 
 
 def test_long_ticket_list_stays_readable():
@@ -538,9 +655,11 @@ def test_long_ticket_list_stays_readable():
         h, t = split(*case)
         check("every ticket lands in head or tail", len(h) + len(t) == len(case))
 
-    # End to end: 14 tickets render a folded tail, and the hidden ones are
-    # still reachable in the markup rather than dropped.
+    # End to end, on the dev dashboard (where the per-ticket list now lives):
+    # 14 tickets render a folded tail, and the hidden ones are still reachable
+    # in the markup rather than dropped.
     import app
+    import auth
     import jira_client as jc
     raws = [mkraw(f"LT-{n:02d}", "Development / In Design", "In Progress",
                   assignee="Marcus Chen", created_d=30,
@@ -552,21 +671,25 @@ def test_long_ticket_list_stays_readable():
     jc.report_projects = lambda: [{"key": "LIFEDATAV2", "name": "LIFEDATAV2"}]
     jc.report_project_keys = lambda: ["LIFEDATAV2"]
     jc.configured_projects = lambda: ["LIFEDATAV2"]
-    html = login_admin(app.app.test_client()).get("/active-time").get_data(as_text=True)
+    c = login_admin(app.app.test_client())
+    dev_id = next(d["id"] for d in auth.all_developers() if d["name"] == "Marcus Chen")
+    html = c.get(f"/active-time?dev={dev_id}").get_data(as_text=True)
     check("the tail is folded behind a disclosure", "more tickets" in html)
     check("folded tickets are still in the page, not dropped",
           all(f"LT-{n:02d}" in html for n in range(14)))
-    check("every ticket still appears in the table", html.count("LT-13") >= 1)
+    check("every ticket still appears", html.count("LT-13") >= 1)
 
 
-def test_roles_on_active_time():
-    """Active Time is admin-only while it is still being evaluated: an admin
-    picks any developer or all of them, and an employee cannot reach the page,
-    its CSV, or a nav link to it.
+def test_roles_on_time_spent_dashboards():
+    """Time-Spent Dashboards is admin-only while it is still being evaluated:
+    an admin reaches the landing dashboard and any developer's own dashboard;
+    an employee cannot reach either, or a nav link to them.
 
-    The per-employee scoping it would need already exists in parse_filters, so
-    opening this up later is a two-line change — these checks are what would
-    have to flip when that happens."""
+    Opening this up later needs more than the usual two-line change, because
+    unlike the other screens this page isn't scoped by parse_filters — the dev
+    dashboard is selected by a raw ?dev= id, so an employee's own ?dev= would
+    need to be checked against their linked developer explicitly (see the note
+    in app.py)."""
     import app
     import auth
     import jira_client as jc
@@ -576,13 +699,6 @@ def test_roles_on_active_time():
               created_d=20, events=[(5, "Jane Doe", "status", "To Do", "Development / In Design")]),
         mkraw("RL-2", "Development / In Design", "In Progress", assignee="Sam Lee",
               created_d=20, events=[(4, "Sam Lee", "status", "To Do", "Development / In Design")]),
-        # Jane held this one first, then handed it to Sam — Jane must still see
-        # her own stretch even though the ticket is no longer hers. This is the
-        # case that breaks if past owners are left without an accountId.
-        mkraw("RL-3", "Development / In Design", "In Progress", assignee="Sam Lee",
-              created_d=20, events=[
-                  (6, "Jane Doe", "status", "To Do", "Development / In Design"),
-                  (3, "Jane Doe", "assignee", "Jane Doe", "Sam Lee")]),
     ]
     jc.fetch_dev_dataset = lambda project=None, lookback_days=None: raws
     jc.detect_custom_fields = lambda: {"story_points": None, "sprint": None, "start_date": None}
@@ -590,34 +706,21 @@ def test_roles_on_active_time():
     jc.report_project_keys = lambda: ["LIFEDATAV2"]
     jc.configured_projects = lambda: ["LIFEDATAV2"]
 
-    def body(html):
-        """Content below the filter bar. The developer dropdown lists everyone
-        an admin may pick, so asserting against the whole page would match an
-        <option> rather than the data."""
-        return html.split("Each ticket, by person", 1)[-1]
-
     admin = login_admin(app.app.test_client())
     h = admin.get("/active-time").get_data(as_text=True)
-    check("admin sees every developer", "Jane Doe" in body(h) and "Sam Lee" in body(h))
-    check("admin nav offers Active Time", "/active-time" in h)
+    check("admin lands on the new dashboard title", "Time-Spent Dashboards" in h)
+    check("admin sees both developers in the summary widget",
+          "Jane Doe" in h and "Sam Lee" in h)
+    check("admin nav offers the renamed page", "Time-Spent Dashboards" in h
+          and "/active-time" in h)
 
-    one = body(admin.get("/active-time?developer=jane%20doe").get_data(as_text=True))
-    check("admin can narrow to one developer", "Jane Doe" in one and "Sam Lee" not in one)
-    check("admin can widen back to everyone",
-          "Sam Lee" in body(admin.get("/active-time").get_data(as_text=True)))
-
-    # Filtering by accountId (what the dropdown actually submits) must find the
-    # same work as filtering by name. RL-3 is the case that breaks without it:
-    # Jane worked it and handed it to Sam, so she is only ever a past owner
-    # there, and past owners carry no accountId of their own in the changelog.
     jane_id = next(d["id"] for d in auth.all_developers() if d["name"] == "Jane Doe")
-    by_id = body(admin.get(f"/active-time?developer={jane_id}").get_data(as_text=True))
-    check("accountId filter finds work on a ticket since handed off",
-          "RL-1" in by_id and "RL-3" in by_id)
-    check("accountId filter excludes the colleague's own ticket", "RL-2" not in by_id)
+    dh = admin.get(f"/active-time?dev={jane_id}").get_data(as_text=True)
+    check("admin reaches Jane's own dashboard", "Jane Doe" in dh.split("<h1>")[1][:40])
+    check("Jane's dashboard doesn't show Sam's ticket", "RL-2" not in dh)
 
-    # Active Time is admin-only for now: employees must not reach the page or
-    # its CSV, and must not be offered it in the nav.
+    # Time-Spent Dashboards is admin-only for now: employees must not reach
+    # the landing page, a dev dashboard, or a nav link to either.
     emp = app.app.test_client()
     emp.post("/register", data={"email": "jane@lifedatacorp.com", "password": "secret123",
                                 "developer_id": jane_id, "developer_name": "Jane Doe"})
@@ -626,11 +729,12 @@ def test_roles_on_active_time():
           u and u["role"] != "admin" and u.get("developer_id") == jane_id)
 
     r = emp.get("/active-time")
-    check("employee is redirected away from Active Time", r.status_code in (301, 302))
-    check("employee redirect lands on My Day", "/my-day" in r.headers.get("Location", ""))
-    check("employee cannot pull the CSV either",
-          emp.get("/api/v2/active-time.csv").status_code in (301, 302))
-    check("employee nav does not offer Active Time",
+    check("employee is redirected away from the landing dashboard",
+          r.status_code in (301, 302) and "/my-day" in r.headers.get("Location", ""))
+    r2 = emp.get(f"/active-time?dev={jane_id}")
+    check("employee is redirected away from even their own dev dashboard",
+          r2.status_code in (301, 302) and "/my-day" in r2.headers.get("Location", ""))
+    check("employee nav does not offer it",
           "/active-time" not in emp.get("/my-day").get_data(as_text=True))
     check("employee still blocked from Flow",
           emp.get("/flow").status_code in (301, 302))
@@ -700,63 +804,6 @@ def test_ticket_active_time_by_person():
         per_block[owner] = per_block.get(owner, 0) + (hi - lo).total_seconds()
     check("blocks reconcile with totals", all(
         abs(per_block[p["person"]] - p["seconds"]) < 1 for p in people.values()))
-
-
-def test_ownership_timeline_geometry():
-    """The ownership timeline's positioning: every lane shares one origin, so
-    handoffs must line up vertically and the status band must tile the ticket's
-    whole life without gaps or overflow."""
-    import dev_reports as dr
-    import screens_web as sw
-
-    # 40-day life: 10d To Do, then 18d Development, then 12d QA. Alice holds it
-    # until day 22, Marcus until day 6, Priya to now.
-    issue = dr.load_dev_issues([mkraw(
-        "TL-1", "In QA Testing (QA Env)", "In Progress", assignee="Priya Nair",
-        created_d=40, events=[
-            (30, "Alice Wong", "status", "To Do", "Development / In Design"),
-            (22, "Alice Wong", "assignee", "Alice Wong", "Marcus Chen"),
-            (12, "Marcus Chen", "status", "Development / In Design", "In QA Testing (QA Env)"),
-            (6, "Marcus Chen", "assignee", "Marcus Chen", "Priya Nair")])])[0]
-
-    import flow_quality as fq
-    tl = sw._ownership_timeline(issue, fq.ticket_active_time(issue))
-    check("timeline built", tl is not None)
-
-    band = tl["band"]
-    check("band starts at the origin", abs(band[0]["left"]) < 0.01)
-    check("band tiles the whole life without gaps", all(
-        abs((band[i]["left"] + band[i]["width"]) - band[i + 1]["left"]) < 0.01
-        for i in range(len(band) - 1)))
-    check("band ends exactly at 100%",
-          abs((band[-1]["left"] + band[-1]["width"]) - 100) < 0.01)
-    check("queue stretch drawn muted, active stretches colored",
-          band[0]["active"] is False and band[1]["active"] is True)
-
-    lanes = {l["person"]: l for l in tl["lanes"]}
-    check("one lane per person who held it",
-          set(lanes) == {"Alice Wong", "Marcus Chen", "Priya Nair"})
-    # Handoff continuity: where one person's last block ends, the next person's
-    # first block begins — the property that makes the picture readable.
-    a_end = lanes["Alice Wong"]["blocks"][-1]
-    m_start = lanes["Marcus Chen"]["blocks"][0]
-    check("handoff lines up vertically",
-          abs((a_end["left"] + a_end["width"]) - m_start["left"]) < 0.01)
-    check("no block escapes the axis", all(
-        b["left"] >= -0.01 and b["left"] + b["width"] <= 100.01
-        for l in tl["lanes"] for b in l["blocks"]))
-    check("axis labelled end to end", len(tl["ticks"]) == 5
-          and tl["ticks"][0]["left"] == 0 and tl["ticks"][-1]["left"] == 100)
-    # Lanes read chronologically (a staircase), not biggest-first — Marcus has
-    # the most hours but picked the ticket up second.
-    check("lanes ordered chronologically",
-          [l["person"] for l in tl["lanes"]] == ["Alice Wong", "Marcus Chen", "Priya Nair"])
-
-    # A ticket with no elapsed time must not divide by zero.
-    instant = dr.load_dev_issues([mkraw("TL-2", "To Do", "To Do", created_d=0)])[0]
-    instant.created = instant.resolved = None
-    check("degenerate ticket returns no timeline",
-          sw._ownership_timeline(instant, []) is None)
 
 
 # ---------------------------------------------------------------------------
