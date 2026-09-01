@@ -244,22 +244,27 @@ def dev_time_totals(issues, developer=None, start=None, end=None, match=None,
     raw = dedup + inflated.
 
     Pass `developer`+`match` to scope to one person (e.g. a dev's own
-    dashboard) without paying for the rest of the team's interval math."""
+    dashboard); the hidden/match check still runs per-person, after every
+    block is collected, not per-block — a person's pid can resolve on one
+    ticket and come back empty on another (ids_by_name only covers people
+    auth.all_developers() or a status-change ever named), and checking too
+    early against a still-empty pid would let a hidden developer's blocks
+    from tickets where they're not the current assignee slip through."""
     per_person = {}
     for i in issues:
         for owner, _status, lo, hi in ticket_active_blocks(i, start, end):
             pid = ((ids_by_name or {}).get(owner)
                   or (i.assignee_id if owner == i.assignee else ""))
-            if developer and match and not match(developer, owner, pid):
-                continue
-            if st.is_developer_hidden(owner, pid):
-                continue
-            d = per_person.setdefault(owner, {"person_id": pid, "intervals": []})
-            if not d["person_id"]:
+            d = per_person.setdefault(owner, {"person_id": "", "intervals": []})
+            if pid and not d["person_id"]:
                 d["person_id"] = pid
             d["intervals"].append((lo, hi))
     out = {}
     for name, d in per_person.items():
+        if st.is_developer_hidden(name, d["person_id"]):
+            continue
+        if developer and match and not match(developer, name, d["person_id"]):
+            continue
         raw = sum((hi - lo).total_seconds() for lo, hi in d["intervals"])
         dedup = sum((hi - lo).total_seconds() for lo, hi in _merge_intervals(d["intervals"]))
         out[name] = {"developer": name, "developer_id": d["person_id"],

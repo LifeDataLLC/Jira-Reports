@@ -1499,8 +1499,7 @@ TICKET_HISTORY_MODAL = """
  .th-modal-close{position:absolute;top:14px;right:16px;background:none;border:none;font-size:22px;line-height:1;color:#98a099;cursor:pointer;padding:4px}
  .th-modal-close:hover{color:#3a453e}
  .th-modal-loading{color:#6b756e;font-size:13px;padding:40px 0;text-align:center}
- .tskey{background:none;border:none;padding:0;font:inherit;font-weight:600;color:var(--green-d);cursor:pointer}
- .tskey:hover{text-decoration:underline}
+ .tskey{font-weight:700}
 </style>
 <div id="thModal" class="th-modal" onclick="if(event.target===this)thClose()">
   <div class="th-modal-card">
@@ -1540,8 +1539,9 @@ TIME_SPENT_TMPL = """
  .ts-name{font-size:13px;font-weight:600;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
  .ts-track{background:#eef0ee;border-radius:5px;height:14px;overflow:hidden}
  .ts-fill{height:100%;min-width:3px;border-radius:5px;background:var(--green)}
- .ts-tickrow{display:grid;grid-template-columns:88px minmax(0,1fr) 90px 56px;gap:10px;align-items:center;padding:5px 0}
+ .ts-tickrow{display:grid;grid-template-columns:88px minmax(0,1fr) 90px 56px;gap:10px;align-items:center;padding:5px 0;cursor:pointer}
  .ts-tickrow:hover{background:#fafbfa}
+ .ts-tickrow:focus-visible{outline:2px solid var(--green);outline-offset:2px}
  .ts-sum{font-size:12.5px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
  .ts-devgrid{display:grid;grid-template-columns:repeat(auto-fill, minmax(180px, 1fr));gap:12px}
  .ts-devbtn{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:20px 16px;font-size:16px;font-weight:700;color:var(--ink2);cursor:pointer;text-decoration:none;display:flex;align-items:center;justify-content:center;text-align:center;min-height:64px}
@@ -1575,8 +1575,8 @@ TIME_SPENT_TMPL = """
     </div>
     <div class="muted" style="margin-bottom:8px">Most time in a working status {{ ticket_range_label }}, summed across everyone who worked it.</div>
     {% for t in top_tickets %}
-    <div class="ts-tickrow">
-      <button type="button" class="tskey" onclick="thOpen('{{ t.issue.key }}')">{{ t.issue.key }}</button>
+    <div class="ts-tickrow" onclick="thOpen('{{ t.issue.key }}')" role="button" tabindex="0" title="View work history" onkeydown="if(event.key==='Enter')thOpen('{{ t.issue.key }}')">
+      <a href="{{ t.issue.url }}" target="_blank" class="tskey" onclick="event.stopPropagation()">{{ t.issue.key }}</a>
       <div class="ts-sum" title="{{ t.issue.summary }}">{{ t.issue.summary }}</div>
       <div style="font-size:12.5px">{% if t.people > 1 %}<span class="pill" title="{{ t.people }} people worked this ticket">{{ t.people }} people</span>{% endif %}</div>
       <div style="font-size:12.5px;font-weight:700;text-align:right">{{ t.label }}</div>
@@ -1639,8 +1639,9 @@ DEV_DASHBOARD_TMPL = """
 <div class="muted" style="margin-top:-14px;margin-bottom:20px">"Total" adds up every ticket's elapsed time in a working status; when two tickets were active at once, that stretch counts toward both, which is where the inflation comes from. "Actually spent working" counts it once.</div>
 
 <style>
- .at-row{display:grid;grid-template-columns:104px minmax(0,1fr) 150px 122px;gap:11px;align-items:center;padding:3px 0}
+ .at-row{display:grid;grid-template-columns:104px minmax(0,1fr) 150px 122px;gap:11px;align-items:center;padding:3px 0;cursor:pointer}
  .at-row:hover{background:#fafbfa}
+ .at-row:focus-visible{outline:2px solid var(--green);outline-offset:2px}
  .at-sum{font-size:12.5px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
  .at-track{background:#eef0ee;border-radius:5px;height:16px;overflow:hidden}
  .at-fill{height:100%;min-width:3px;border-radius:5px}
@@ -1664,8 +1665,8 @@ DEV_DASHBOARD_TMPL = """
     {% endif %}
   </div>
   {% for t in group.top %}
-  <div class="at-row">
-    <button type="button" class="tskey" onclick="thOpen('{{ t.issue.key }}')">{{ t.issue.key }}</button>
+  <div class="at-row" onclick="thOpen('{{ t.issue.key }}')" role="button" tabindex="0" title="View work history" onkeydown="if(event.key==='Enter')thOpen('{{ t.issue.key }}')">
+    <a href="{{ t.issue.url }}" target="_blank" class="tskey" onclick="event.stopPropagation()">{{ t.issue.key }}</a>
     <div class="at-sum" title="{{ t.issue.summary }} · {{ t.issue.status }}">{{ t.issue.summary }}</div>
     <div class="at-track" title="{{ t.issue.status }} — {{ t.label }}"><div class="at-fill" style="width:{{ t.bar_pct }}%;background:{{ t.color }}"></div></div>
     <div style="font-size:12.5px"><b>{{ t.label }}</b>{% if t.logged_label != '—' %} <span class="muted">· {{ t.logged_label }}</span>{% endif %}</div>
@@ -1676,8 +1677,8 @@ DEV_DASHBOARD_TMPL = """
   <details>
     <summary class="at-more">{{ group.rest|length }} more {{ 'ticket' if group.rest|length == 1 else 'tickets' }} · {{ group.rest_label }} between them</summary>
     {% for t in group.rest %}
-    <div class="at-row">
-      <button type="button" class="tskey" onclick="thOpen('{{ t.issue.key }}')">{{ t.issue.key }}</button>
+    <div class="at-row" onclick="thOpen('{{ t.issue.key }}')" role="button" tabindex="0" title="View work history" onkeydown="if(event.key==='Enter')thOpen('{{ t.issue.key }}')">
+      <a href="{{ t.issue.url }}" target="_blank" class="tskey" onclick="event.stopPropagation()">{{ t.issue.key }}</a>
       <div class="at-sum" title="{{ t.issue.summary }} · {{ t.issue.status }}">{{ t.issue.summary }}</div>
       <div class="at-track" title="{{ t.issue.status }} — {{ t.label }}"><div class="at-fill" style="width:{{ t.bar_pct }}%;background:{{ t.color }}"></div></div>
       <div style="font-size:12.5px"><b>{{ t.label }}</b>{% if t.logged_label != '—' %} <span class="muted">· {{ t.logged_label }}</span>{% endif %}</div>
@@ -1711,15 +1712,17 @@ def _ids_by_name():
     return ids
 
 
-def _developer_directory(issues, ids_by_name):
-    """{accountId (or, failing that, the display name) -> display name} for
-    everyone with lifetime active-ownership history, minus hidden developers —
-    the full set the Time-Spent Dashboards can talk about, not just current
-    assignees. Falling back to the name as the key (rather than dropping the
-    person) still routes correctly: dev_match_exact matches by name too."""
-    import flow_quality as fq
-    totals = fq.dev_time_totals(issues, ids_by_name=ids_by_name)
-    return {(d["developer_id"] or name): name for name, d in totals.items()}
+def _developer_directory():
+    """{accountId -> display name} for exactly the developers who show up in
+    the normal Project/Developer dropdown everywhere else in the app —
+    auth.visible_developers(), current assignees minus anyone hidden in
+    Settings. This is deliberately the SAME set as the dropdown, not a
+    broader one: someone who only ever appears as a past owner of a ticket
+    they've since handed off (real, ownership-attributed time — see
+    dev_time_totals) still doesn't get a dashboard entry here unless they're
+    also a current assignee somewhere, exactly like the dropdown."""
+    import auth
+    return {d["id"]: d["name"] for d in auth.visible_developers()}
 
 
 def _status_color(status):
@@ -1735,12 +1738,17 @@ def _landing_data():
     _psel, scope = current_project_selection()
     issues = _issues(scope)
     ids = _ids_by_name()
-    directory = _developer_directory(issues, ids)
+    directory = _developer_directory()
+    visible_names = set(directory.values())
 
     dev_range = request.args.get("dev_range") or _DEFAULT_RANGE
     dev_start, dev_end, dev_range = _resolve_range(dev_range)
     totals = fq.dev_time_totals(issues, start=dev_start, end=dev_end, ids_by_name=ids)
-    dev_rows = sorted(totals.values(), key=lambda d: -d["dedup_seconds"])
+    # Only developers who'd show up in the normal dropdown get a row here —
+    # someone visible only as a past owner (real ownership time, but not the
+    # dropdown's notion of "a developer") doesn't get one of their own.
+    dev_rows = sorted((d for d in totals.values() if d["developer"] in visible_names),
+                      key=lambda d: -d["dedup_seconds"])
     busiest = max((d["dedup_seconds"] for d in dev_rows), default=0) or 1
     for d in dev_rows:
         d["label"] = _dur(d["dedup_seconds"])
@@ -1764,16 +1772,14 @@ def _landing_data():
 
 def _dev_dashboard_data(dev_id):
     """Data for one developer's Time Spent dashboard, or None if dev_id doesn't
-    resolve to a visible developer.
-
-    Resolved against the full ownership directory, not just current
-    assignees — a dev whose only visible work is a ticket they've since handed
-    off must still be reachable here."""
+    resolve to a visible developer — the same set the dropdown offers
+    elsewhere in the app, so a stale or hand-edited link can't reach anyone
+    who wouldn't otherwise be selectable."""
     import flow_quality as fq
     psel, scope = current_project_selection()
     issues = _issues(scope)
     ids = _ids_by_name()
-    dev_name = _developer_directory(issues, ids).get(dev_id)
+    dev_name = _developer_directory().get(dev_id)
     if not dev_name:
         return None
     custom_start = (request.args.get("start") or "").strip()

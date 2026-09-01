@@ -474,12 +474,18 @@ def test_concurrency_dedup_and_top_tickets():
           len(fq.top_tickets(dr.load_dev_issues([handoff, solo]), limit=1)) == 1)
 
 
-def test_developer_directory_includes_past_only_owners():
-    """A developer whose only visible work is a ticket they've since handed
-    off is never the CURRENT assignee of anything — auth.all_developers()
-    (current assignees only) would never know they exist. The Time-Spent
-    Dashboards' own directory must still find them, or their "Jump to a
-    developer" button and their own dashboard link could never be built."""
+def test_developer_directory_matches_the_normal_dropdown():
+    """Whoever shows up as a "developer" in Time-Spent Dashboards — the
+    dev-summary widget's rows and the "Select a Developer" buttons — must be
+    exactly auth.visible_developers(): the same set the Project/Developer
+    dropdown offers on every other screen, minus anyone hidden in Settings.
+
+    A developer whose only visible work is a ticket they've since handed off
+    is never a CURRENT assignee of anything, so the dropdown doesn't know
+    them either — they get no row and no button, even though their
+    ownership-attributed time is real (dev_time_totals still computes it
+    correctly; this is specifically about who gets LISTED)."""
+    import auth
     import dev_reports as dr
     import jira_client as jc
     import screens_web as sw
@@ -488,21 +494,52 @@ def test_developer_directory_includes_past_only_owners():
                created_d=20, events=[
                    (15, "Alice First", "status", "To Do", "Development / In Design"),
                    (10, "Alice First", "assignee", "Alice First", "Bob Second")])
-    handed_off = dr.load_dev_issues([raw])
     jc.fetch_dev_dataset = lambda project=None, lookback_days=None: [raw]
     jc.detect_custom_fields = lambda: {"story_points": None, "sprint": None, "start_date": None}
 
+    # ids_by_name still resolves her id from status-change authorship — that
+    # remains useful for correctly consolidating a VISIBLE developer's own
+    # past-owner appearances under one identity — it's just no longer what
+    # decides who gets listed as a developer.
     ids = sw._ids_by_name()
-    check("a past-only owner's id is resolved from her status-change authorship",
+    check("a past-only owner's id is still resolvable via status-change authorship",
           ids.get("Alice First") == "alicefirst")
 
-    directory = sw._developer_directory(handed_off, ids)
-    check("the past-only owner appears in the directory",
-          "Alice First" in directory.values())
-    check("the current assignee appears too",
-          "Bob Second" in directory.values())
-    check("she is keyed by the resolved id, not a name fallback",
-          directory.get("alicefirst") == "Alice First")
+    directory = sw._developer_directory()
+    check("the past-only owner does NOT appear — she's not in the dropdown either",
+          "Alice First" not in directory.values())
+    check("the current assignee does appear", "Bob Second" in directory.values())
+    check("directory keys are exactly auth.visible_developers()'s ids",
+          set(directory) == {d["id"] for d in auth.visible_developers()})
+
+    # Hiding a current assignee in Settings removes them from here too, the
+    # same way it removes them from the dropdown.
+    s = st.load()
+    prior_hidden = s.get("hidden_developers", [])
+    s["hidden_developers"] = prior_hidden + ["bobsecond"]
+    st.save(s)
+    try:
+        check("a hidden current assignee is excluded",
+              "Bob Second" not in sw._developer_directory().values())
+    finally:
+        s = st.load()
+        s["hidden_developers"] = prior_hidden
+        st.save(s)
+
+    # End to end: the landing page's widget and button grid must agree with
+    # the directory, not with the broader ownership-time computation.
+    import app
+    c = login_admin(app.app.test_client())
+    h = c.get("/active-time").get_data(as_text=True)
+    check("landing page never lists the past-only owner", "Alice First" not in h)
+    check("landing page still lists the current assignee", "Bob Second" in h)
+
+    # And her dashboard link is refused, not silently served — a stale or
+    # hand-typed URL shouldn't reach someone the dropdown wouldn't offer.
+    alice_id = ids["Alice First"]
+    dh = c.get(f"/active-time?dev={alice_id}").get_data(as_text=True)
+    check("her own dashboard link is refused",
+          "No developer matches" in dh)
 
 
 def test_elapsed_and_effort_stay_separate():
