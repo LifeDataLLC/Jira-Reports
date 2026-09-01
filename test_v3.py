@@ -635,6 +635,19 @@ def test_dev_dashboard_range_control():
     check("switching preset marks the right pill active",
           re.search(r'pill ok" href="\?[^"]*range=14d', h14))
 
+    # The bug this test exists for: clicking "Custom" the first time carries
+    # no dates yet. That must still land in custom mode with the picker
+    # visible and pre-filled — not silently fall back to the 7-day preset
+    # with the picker never appearing.
+    hbare = get("&range=custom")
+    check("clicking Custom with no dates yet still selects the Custom pill",
+          re.search(r'pill ok" href="\?[^"]*range=custom', hbare))
+    check("the date picker form appears on the first click",
+          "<label>From" in hbare and 'type="date"' in hbare)
+    check("the picker is pre-filled with a real window, not left blank",
+          re.search(r'name="start" value="\d{4}-\d{2}-\d{2}"', hbare)
+          and re.search(r'name="end" value="\d{4}-\d{2}-\d{2}"', hbare))
+
     hc = get("&range=custom&start=2026-08-01&end=2026-08-10")
     check("custom start box echoes exactly", 'name="start" value="2026-08-01"' in hc)
     check("custom end box echoes exactly", 'name="end" value="2026-08-10"' in hc)
@@ -653,6 +666,13 @@ def test_dev_dashboard_range_control():
     cstart, cend, ckey = sw._resolve_range("custom", "2026-08-01", "2026-08-10")
     check("custom end is exclusive (spans the 10th fully)",
           cend == dt.datetime(2026, 8, 11, tzinfo=dt.timezone.utc) and ckey == "custom")
+
+    # "custom" is a mode, not just a pair of dates — the exact bug fixed here.
+    bstart, bend, bkey = sw._resolve_range("custom")
+    check("custom with no dates yet still resolves to the custom mode",
+          bkey == "custom")
+    check("and still returns a sane, midnight-aligned fallback window",
+          bstart.hour == 0 and bend.hour == 0 and bend > bstart)
 
     check("_dash_link preserves dev/project across a range switch",
           sw._dash_link(dev_id, "LIFEDATAV2", "30d") ==

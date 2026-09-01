@@ -1470,16 +1470,22 @@ _DEFAULT_RANGE = "7d"
 
 
 def _resolve_range(range_key, custom_start=None, custom_end=None):
-    """(start, end, resolved_range_key) for a preset (7d/14d/30d) or a custom
-    start/end. Whole-day aligned with an exclusive end, so re-applying the
-    same inputs always lands on the identical window — a range control that
-    shifted on re-submit would be worse than a blank one."""
+    """(start, end, resolved_range_key) for a preset (7d/14d/30d) or custom.
+
+    "custom" is a MODE, not just a pair of dates: clicking the Custom pill
+    the first time carries no start/end yet, and still has to come back as
+    resolved_range_key == "custom" — or the template's {% if range_key ==
+    'custom' %} never fires, the date inputs never appear, and the click
+    silently lands back on the 7-day default with no way to tell why. Fixed
+    dates only refine the window; the fallback (last 7 days) keeps the cards
+    and ticket list showing something sane in the meantime."""
     tomorrow = A.now_utc().date() + dt.timedelta(days=1)
-    if range_key == "custom" and custom_start:
-        start = dt.datetime.combine(dt.date.fromisoformat(custom_start),
-                                    dt.time.min, dt.timezone.utc)
+    if range_key == "custom":
         end_date = (dt.date.fromisoformat(custom_end) if custom_end
                    else tomorrow - dt.timedelta(days=1))
+        start_date = (dt.date.fromisoformat(custom_start) if custom_start
+                     else end_date - dt.timedelta(days=_RANGE_DAYS[_DEFAULT_RANGE] - 1))
+        start = dt.datetime.combine(start_date, dt.time.min, dt.timezone.utc)
         end = dt.datetime.combine(end_date + dt.timedelta(days=1), dt.time.min, dt.timezone.utc)
         return start, end, "custom"
     key = range_key if range_key in _RANGE_DAYS else _DEFAULT_RANGE
@@ -1621,28 +1627,28 @@ DEV_DASHBOARD_TMPL = """
 <h1>{{ dev_name }} <span style="font-weight:500;font-size:15px;color:var(--muted)">· Time Spent</span></h1>
 <div class="sub">{{ window_label }}</div>
 """ + TICKET_HISTORY_MODAL + """
-<div class="sectionbox" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
-  <form method="get" style="display:inline-flex;align-items:center;gap:8px">
+<div class="filterbar">
+  <form method="get" style="display:contents">
     <input type="hidden" name="dev" value="{{ dev_id }}">
     <input type="hidden" name="range" value="{{ range_key }}">
     <input type="hidden" name="start" value="{{ custom_start }}">
     <input type="hidden" name="end" value="{{ custom_end }}">""" + PROJECT_SELECT + """
     <button class="btn" type="submit">Apply</button>
   </form>
-  <span style="margin-left:auto">
+  <div style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
     <a class="pill {{ 'ok' if range_key == '7d' }}" href="?{{ link('7d') }}">Past 7 days</a>
     <a class="pill {{ 'ok' if range_key == '14d' }}" href="?{{ link('14d') }}">Past 14 days</a>
     <a class="pill {{ 'ok' if range_key == '30d' }}" href="?{{ link('30d') }}">Past 30 days</a>
     <a class="pill {{ 'ok' if range_key == 'custom' }}" href="?{{ link('custom') }}">Custom</a>
-  </span>
+  </div>
   {% if range_key == 'custom' %}
-  <form method="get" style="display:inline-flex;gap:8px;align-items:center">
+  <form method="get" style="display:contents">
     <input type="hidden" name="dev" value="{{ dev_id }}">
     <input type="hidden" name="project" value="{{ filter_project_selected }}">
     <input type="hidden" name="range" value="custom">
-    From <input type="date" name="start" value="{{ custom_start }}">
-    To <input type="date" name="end" value="{{ custom_end }}">
-    <button class="pill" type="submit">Apply range</button>
+    <label>From<input type="date" name="start" value="{{ custom_start }}"></label>
+    <label>To<input type="date" name="end" value="{{ custom_end }}"></label>
+    <button class="btn" type="submit">Apply range</button>
   </form>
   {% endif %}
 </div>
@@ -1817,6 +1823,13 @@ def _dev_dashboard_data(dev_id):
     custom_end = (request.args.get("end") or "").strip()
     start, end, range_key = _resolve_range(
         request.args.get("range") or _DEFAULT_RANGE, custom_start, custom_end)
+    if range_key == "custom":
+        # The date boxes must always name the window actually in effect, not
+        # sit blank while the cards below show a fallback range — same reason
+        # the roster page's Start/End boxes were never left empty. `end` is
+        # exclusive, so step back a day to name the last day included.
+        custom_start = start.strftime("%Y-%m-%d")
+        custom_end = (end - dt.timedelta(days=1)).strftime("%Y-%m-%d")
 
     all_totals = fq.dev_time_totals(issues, developer=dev_id, start=start, end=end,
                                     match=dr.dev_match_exact, ids_by_name=ids)
