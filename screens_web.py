@@ -1353,10 +1353,10 @@ def _dur(seconds):
 
     Rounds to whole hours BEFORE splitting off days, so a shade under 7 days
     reads "7d" rather than "6d 24h". (app.hdur, which this mirrors, subtracts
-    days first and can leave a 24-hour remainder — worth fixing there too, but
+    days first and can leave a 24-hour remainder; worth fixing there too, but
     that helper backs the legacy report pages.)"""
     if not seconds:
-        return "—"
+        return "0h"
     if seconds < 3600:
         return f"{max(round(seconds / 60), 1)}m"
     hours = round(seconds / 3600)
@@ -1441,11 +1441,27 @@ def _group_by_dev(rows, window_seconds=None):
             t["label"] = _dur(t["active_seconds"])
             t["logged_label"] = _dur(t["logged_seconds"])
             t["color"] = _status_color(t["issue"].status)
+            # What stage(s) this ticket was in while being worked, as segments
+            # of its OWN bar (not a separate caption line): usually one
+            # segment — the current status — but a ticket the dev carried
+            # across a handoff shows its real composition, e.g. mostly
+            # Development with a sliver of QA Testing.
+            secs = t["statuses"] or {t["issue"].status: t["active_seconds"]}
+            total = sum(secs.values()) or 1
+            t["segments"] = [
+                {"status": s, "pct": round(100 * v / total, 2),
+                 "color": _status_color(s), "label": _dur(v)}
+                for s, v in sorted(secs.items(), key=lambda kv: -kv[1])]
         g["top"], g["rest"] = _split_head_tail(g["tickets"], g["seconds"])
         g["rest_label"] = _dur(sum(t["active_seconds"] for t in g["rest"]))
         # How concentrated the week was: one ticket's share of it. With 14
         # tickets this is the number that says "scattered" or "heads-down".
         g["top_share"] = g["tickets"][0]["share_pct"] if g["tickets"] else 0
+        seen = {}
+        for t in g["tickets"]:
+            for seg in t["segments"]:
+                seen.setdefault(seg["status"], seg["color"])
+        g["statuses_seen"] = sorted(seen.items())
     return out
 
 
@@ -1556,7 +1572,7 @@ TIME_SPENT_TMPL = """
         {% for rk, label in [('7d','7d'),('14d','14d'),('30d','30d')] %}<a class="pill {{ 'ok' if dev_range == rk }}" href="?dev_range={{ rk }}&ticket_range={{ ticket_range }}">{{ label }}</a>{% endfor %}
       </span>
     </div>
-    <div class="muted" style="margin-bottom:8px">Actual working time {{ dev_range_label }} — at most one ticket credited per instant, so overlapping tickets aren't double-counted.</div>
+    <div class="muted" style="margin-bottom:8px">Actual working time {{ dev_range_label }}, counting at most one ticket per instant so overlapping tickets aren't double-counted.</div>
     {% for d in dev_rows %}
     <a class="ts-devrow" href="/active-time?dev={{ d.developer_id }}" style="text-decoration:none;color:inherit">
       <div class="ts-name">{{ d.developer }}</div>
@@ -1596,7 +1612,7 @@ TIME_SPENT_TMPL = """
 
 DEV_NOT_FOUND_TMPL = """
 <h1>Time-Spent Dashboards</h1>
-<div class="sub">No developer matches that link — it may be stale, or the account was hidden in Settings.</div>
+<div class="sub">No developer matches that link. It may be stale, or the account was hidden in Settings.</div>
 <div class="sectionbox"><a href="/active-time">← Back to Time-Spent Dashboards</a></div>
 """
 
@@ -1639,39 +1655,51 @@ DEV_DASHBOARD_TMPL = """
 <div class="muted" style="margin-top:-14px;margin-bottom:20px">"Total" adds up every ticket's elapsed time in a working status; when two tickets were active at once, that stretch counts toward both, which is where the inflation comes from. "Actually spent working" counts it once.</div>
 
 <style>
- .at-row{display:grid;grid-template-columns:104px minmax(0,1fr) 150px 122px;gap:11px;align-items:center;padding:3px 0;cursor:pointer}
+ .at-row{display:grid;grid-template-columns:100px minmax(0,1fr) 180px 116px;gap:12px;align-items:center;padding:7px 4px;border-radius:8px;cursor:pointer}
  .at-row:hover{background:#fafbfa}
- .at-row:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+ .at-row:focus-visible{outline:2px solid var(--green);outline-offset:-2px}
  .at-sum{font-size:12.5px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
- .at-track{background:#eef0ee;border-radius:5px;height:16px;overflow:hidden}
- .at-fill{height:100%;min-width:3px;border-radius:5px}
+ .at-track{background:#eef0ee;border-radius:5px;height:18px;overflow:hidden;display:flex}
+ .at-track .at-fill{height:100%;display:flex;min-width:4px;border-radius:5px;overflow:hidden}
+ .at-track .at-fill > div{height:100%}
+ .at-track .at-fill > div + div{border-left:1px solid #fff}
+ .at-dur{font-size:12.5px;font-weight:700;text-align:right;white-space:nowrap}
  .at-split{display:flex;height:12px;border-radius:4px;overflow:hidden;background:#eef0ee;min-width:190px;flex:1;max-width:340px}
  .at-split div{border-right:1px solid #fff}
  .at-split div:last-child{border-right:none}
- .at-more{cursor:pointer;font-size:12.5px;color:var(--green-d);font-weight:600;padding:6px 0 2px}
+ .at-more{cursor:pointer;font-size:12.5px;color:var(--green-d);font-weight:600;padding:8px 4px 2px}
  .at-more:hover{text-decoration:underline}
  details[open] .at-more{margin-bottom:2px}
+ .at-legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:11.5px;color:var(--muted);margin:2px 4px 12px}
+ .at-legend span{display:inline-flex;align-items:center;gap:5px}
+ .at-legend i{width:9px;height:9px;border-radius:2px;flex:none}
 </style>
-<h2>Tickets worked <span class="muted">(bars share one scale — longest stretch is full width; click a key for its full history)</span></h2>
+<h2>Tickets worked <span class="muted">(one row per ticket, longest stretch shown at full width; click a row for its full history, the key opens it in Jira)</span></h2>
 <div class="sectionbox">
 {% if group %}
   <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap">
-    <span class="muted"><b style="color:var(--ink2)">{{ group.count }}</b> {{ 'ticket' if group.count == 1 else 'tickets' }} · {{ group.label }} total{% if group.logged_label != '—' %} · {{ group.logged_label }} logged{% endif %}</span>
+    <span class="muted"><b style="color:var(--ink2)">{{ group.count }}</b> {{ 'ticket' if group.count == 1 else 'tickets' }} · {{ group.label }} total{% if group.logged %} · {{ group.logged_label }} logged{% endif %}</span>
     {% if group.count > 1 %}
     <div class="at-split" title="How this developer's time split across their {{ group.count }} tickets">
-      {% for t in group.tickets %}<div title="{{ t.issue.key }} — {{ t.label }} ({{ t.share_pct|round|int }}%)" style="width:{{ t.share_pct }}%;background:{{ t.color }}"></div>{% endfor %}
+      {% for t in group.tickets %}<div title="{{ t.issue.key }}: {{ t.label }} ({{ t.share_pct|round|int }}%)" style="width:{{ t.share_pct }}%;background:{{ t.color }}"></div>{% endfor %}
     </div>
     <span class="muted">{{ group.top_share|round|int }}% on {{ group.tickets[0].issue.key }}</span>
     {% endif %}
   </div>
+  {% if group.statuses_seen|length > 1 %}
+  <div class="at-legend">{% for s, c in group.statuses_seen %}<span><i style="background:{{ c }}"></i>{{ s }}</span>{% endfor %}</div>
+  {% endif %}
   {% for t in group.top %}
   <div class="at-row" onclick="thOpen('{{ t.issue.key }}')" role="button" tabindex="0" title="View work history" onkeydown="if(event.key==='Enter')thOpen('{{ t.issue.key }}')">
     <a href="{{ t.issue.url }}" target="_blank" class="tskey" onclick="event.stopPropagation()">{{ t.issue.key }}</a>
-    <div class="at-sum" title="{{ t.issue.summary }} · {{ t.issue.status }}">{{ t.issue.summary }}</div>
-    <div class="at-track" title="{{ t.issue.status }} — {{ t.label }}"><div class="at-fill" style="width:{{ t.bar_pct }}%;background:{{ t.color }}"></div></div>
-    <div style="font-size:12.5px"><b>{{ t.label }}</b>{% if t.logged_label != '—' %} <span class="muted">· {{ t.logged_label }}</span>{% endif %}</div>
+    <div class="at-sum" title="{{ t.issue.summary }}">{{ t.issue.summary }}</div>
+    <div class="at-track">
+      <div class="at-fill" style="width:{{ t.bar_pct }}%">
+        {% for seg in t.segments %}<div title="{{ seg.status }}: {{ seg.label }}" style="width:{{ seg.pct }}%;background:{{ seg.color }}"></div>{% endfor %}
+      </div>
+    </div>
+    <div class="at-dur">{{ t.label }}{% if t.logged_seconds %} <span class="muted" style="font-weight:500">· {{ t.logged_label }}</span>{% endif %}</div>
   </div>
-  <div class="muted" style="margin:-3px 0 8px 130px;font-size:11px">{% for s, secs in t.statuses.items() %}<span style="margin-right:10px">{{ s }}: {{ dur(secs) }}</span>{% endfor %}</div>
   {% endfor %}
   {% if group.rest %}
   <details>
@@ -1679,11 +1707,14 @@ DEV_DASHBOARD_TMPL = """
     {% for t in group.rest %}
     <div class="at-row" onclick="thOpen('{{ t.issue.key }}')" role="button" tabindex="0" title="View work history" onkeydown="if(event.key==='Enter')thOpen('{{ t.issue.key }}')">
       <a href="{{ t.issue.url }}" target="_blank" class="tskey" onclick="event.stopPropagation()">{{ t.issue.key }}</a>
-      <div class="at-sum" title="{{ t.issue.summary }} · {{ t.issue.status }}">{{ t.issue.summary }}</div>
-      <div class="at-track" title="{{ t.issue.status }} — {{ t.label }}"><div class="at-fill" style="width:{{ t.bar_pct }}%;background:{{ t.color }}"></div></div>
-      <div style="font-size:12.5px"><b>{{ t.label }}</b>{% if t.logged_label != '—' %} <span class="muted">· {{ t.logged_label }}</span>{% endif %}</div>
+      <div class="at-sum" title="{{ t.issue.summary }}">{{ t.issue.summary }}</div>
+      <div class="at-track">
+        <div class="at-fill" style="width:{{ t.bar_pct }}%">
+          {% for seg in t.segments %}<div title="{{ seg.status }}: {{ seg.label }}" style="width:{{ seg.pct }}%;background:{{ seg.color }}"></div>{% endfor %}
+        </div>
+      </div>
+      <div class="at-dur">{{ t.label }}{% if t.logged_seconds %} <span class="muted" style="font-weight:500">· {{ t.logged_label }}</span>{% endif %}</div>
     </div>
-    <div class="muted" style="margin:-3px 0 8px 130px;font-size:11px">{% for s, secs in t.statuses.items() %}<span style="margin-right:10px">{{ s }}: {{ dur(secs) }}</span>{% endfor %}</div>
     {% endfor %}
   </details>
   {% endif %}

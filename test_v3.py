@@ -582,7 +582,11 @@ def test_elapsed_and_effort_stay_separate():
     check("no worklogs yields zero, not a crash", fq.logged_seconds(bare) == 0)
 
     import screens_web as sw
-    check("zero effort renders as an em dash, not '0h'", sw._dur(0) == "—")
+    # A dashboard card can legitimately show zero (e.g. a developer with no
+    # overlapping tickets has zero inflation) — that has to read as a real
+    # zero, not a dash implying "no data" nor an em dash at all (none of these
+    # pages use one).
+    check("zero renders as a real zero, not a dash", sw._dur(0) == "0h")
     check("durations read as days once past a day", sw._dur(168 * 3600) == "7d")
     check("short durations stay in hours", sw._dur(5 * 3600) == "5h")
     check("sub-hour durations stay in minutes", sw._dur(20 * 60) == "20m")
@@ -656,6 +660,76 @@ def test_dev_dashboard_range_control():
     check("_dash_link carries custom dates only when given",
           sw._dash_link(dev_id, "LIFEDATAV2", "custom", "2026-08-01", "2026-08-10") ==
           f"dev={dev_id}&project=LIFEDATAV2&range=custom&start=2026-08-01&end=2026-08-10")
+
+
+def test_ticket_row_shows_stage_composition():
+    """Each ticket row's bar shows what stage(s) it was in while this developer
+    worked it, as real segments of the row's own bar — not a separate caption
+    line below it. A single-status ticket is one full segment; a ticket the
+    dev carried across a handoff (dev work, then picked back up after QA sent
+    it back) shows its real composition, and the segments must reconcile with
+    the row's own total."""
+    import dev_reports as dr
+    import flow_quality as fq
+    import screens_web as sw
+
+    single = mkraw("SG-1", "Development / In Design", "In Progress", assignee="Jane Doe",
+                   created_d=10, events=[(3, "Jane Doe", "status", "To Do",
+                                          "Development / In Design")])
+    mixed = mkraw("MX-1", "In QA Testing (QA Env)", "In Progress", assignee="Jane Doe",
+                  created_d=10, events=[
+                      (5, "Jane Doe", "status", "To Do", "Development / In Design"),
+                      (2, "Jane Doe", "status", "Development / In Design",
+                       "In QA Testing (QA Env)")])
+    issues = dr.load_dev_issues([single, mixed])
+    rows = fq.active_time(issues, match=dr.dev_match_exact)
+    groups = sw._group_by_dev(rows)
+    g = groups[0]
+    tickets = {t["issue"].key: t for t in g["tickets"]}
+
+    check("a single-status ticket is one full segment",
+          len(tickets["SG-1"]["segments"]) == 1
+          and tickets["SG-1"]["segments"][0]["pct"] == 100)
+    check("a ticket worked across a handoff shows both stages",
+          {s["status"] for s in tickets["MX-1"]["segments"]}
+          == {"Development / In Design", "In QA Testing (QA Env)"})
+    check("segment shares sum to 100% of the ticket's own total",
+          abs(sum(s["pct"] for s in tickets["MX-1"]["segments"]) - 100) < 0.1)
+    check("the legend lists every distinct status across the developer's tickets",
+          {s for s, _c in g["statuses_seen"]}
+          == {"Development / In Design", "In QA Testing (QA Env)"})
+
+
+def test_no_em_dashes_on_time_spent_pages():
+    """A plain style rule for this feature: no em dashes anywhere on the
+    landing dashboard, a developer's dashboard, or the not-found state -
+    including a dashboard card showing a real, legitimate zero (most
+    developers have zero inflation), which must read as "0h", never as a dash
+    implying "no data"."""
+    import app
+    import auth
+    import jira_client as jc
+
+    raw = mkraw("ED-1", "Development / In Design", "In Progress", assignee="Jane Doe",
+               created_d=10, events=[(2, "Jane Doe", "status", "To Do",
+                                      "Development / In Design")])
+    jc.fetch_dev_dataset = lambda project=None, lookback_days=None: [raw]
+    jc.detect_custom_fields = lambda: {"story_points": None, "sprint": None, "start_date": None}
+    jc.report_projects = lambda: [{"key": "LIFEDATAV2", "name": "LIFEDATAV2"}]
+    jc.report_project_keys = lambda: ["LIFEDATAV2"]
+    jc.configured_projects = lambda: ["LIFEDATAV2"]
+    c = login_admin(app.app.test_client())
+
+    landing = c.get("/active-time").get_data(as_text=True)
+    check("no em dash on the landing dashboard", "—" not in landing)
+
+    jane_id = next(d["id"] for d in auth.all_developers() if d["name"] == "Jane Doe")
+    dev = c.get(f"/active-time?dev={jane_id}").get_data(as_text=True)
+    check("no em dash on a developer's dashboard", "—" not in dev)
+    check("zero inflation reads as a real zero on the card", "0h" in dev)
+
+    missing = c.get("/active-time?dev=NOPE-999").get_data(as_text=True)
+    check("no em dash on the not-found state", "—" not in missing)
 
 
 def test_long_ticket_list_stays_readable():
