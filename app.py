@@ -74,13 +74,13 @@ _ADMIN_PREFIXES = ("/settings", "/admin", "/my-day/rollup", "/my-day/feed")
 # /my-day/feed still fall under _ADMIN_PREFIXES above, so they stay admin-only
 # even though they match here. /api/v2/ticket-history backs the Release
 # timeline's per-ticket history popup.
-# Time-Spent Dashboards ("/active-time") stays admin-only while it is still
-# being evaluated. Opening it up later means adding "/active-time" here and to
-# the employee nav list in screens_web.page() — the per-dev dashboard would
-# also need a check that an employee's ?dev= matches their own linked
-# developer, since it isn't scoped by parse_filters like the other screens.
-_EMPLOYEE_PREFIXES = ("/my-day", "/release", "/api/v2/ticket-history",
-                      "/change-password", "/logout")
+# Time-Spent Dashboards ("/active-time") is open to employees, but only for
+# their own data: time_spent_screen() sends an employee straight to their own
+# dashboard and refuses any other ?dev=. That check lives in the route rather
+# than here because the screen takes its developer from the URL instead of
+# being scoped by parse_filters like the other screens.
+_EMPLOYEE_PREFIXES = ("/my-day", "/release", "/active-time",
+                      "/api/v2/ticket-history", "/change-password", "/logout")
 
 
 @app.before_request

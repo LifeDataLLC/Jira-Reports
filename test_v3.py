@@ -812,15 +812,14 @@ def test_long_ticket_list_stays_readable():
 
 
 def test_roles_on_time_spent_dashboards():
-    """Time-Spent Dashboards is admin-only while it is still being evaluated:
-    an admin reaches the landing dashboard and any developer's own dashboard;
-    an employee cannot reach either, or a nav link to them.
+    """Time-Spent Dashboards is open to employees, but only for themselves: an
+    admin gets the roster and any developer's dashboard, while an employee is
+    taken straight to their own and cannot reach the roster, the team's busiest
+    tickets, or a colleague's dashboard.
 
-    Opening this up later needs more than the usual two-line change, because
-    unlike the other screens this page isn't scoped by parse_filters — the dev
-    dashboard is selected by a raw ?dev= id, so an employee's own ?dev= would
-    need to be checked against their linked developer explicitly (see the note
-    in app.py)."""
+    This page isn't scoped by parse_filters like the other screens — the
+    dashboard is selected by a raw ?dev= id — so the route checks an employee's
+    ?dev= against their linked developer explicitly. These checks guard that."""
     import app
     import auth
     import jira_client as jc
@@ -850,8 +849,7 @@ def test_roles_on_time_spent_dashboards():
     check("admin reaches Jane's own dashboard", "Jane Doe" in dh.split("<h1>")[1][:40])
     check("Jane's dashboard doesn't show Sam's ticket", "RL-2" not in dh)
 
-    # Time-Spent Dashboards is admin-only for now: employees must not reach
-    # the landing page, a dev dashboard, or a nav link to either.
+    # An employee gets their own dashboard and only their own.
     emp = app.app.test_client()
     emp.post("/register", data={"email": "jane@lifedatacorp.com", "password": "secret123",
                                 "developer_id": jane_id, "developer_name": "Jane Doe"})
@@ -860,17 +858,45 @@ def test_roles_on_time_spent_dashboards():
           u and u["role"] != "admin" and u.get("developer_id") == jane_id)
 
     r = emp.get("/active-time")
-    check("employee is redirected away from the landing dashboard",
-          r.status_code in (301, 302) and "/my-day" in r.headers.get("Location", ""))
-    r2 = emp.get(f"/active-time?dev={jane_id}")
-    check("employee is redirected away from even their own dev dashboard",
-          r2.status_code in (301, 302) and "/my-day" in r2.headers.get("Location", ""))
-    check("employee nav does not offer it",
-          "/active-time" not in emp.get("/my-day").get_data(as_text=True))
-    check("employee still blocked from Flow",
-          emp.get("/flow").status_code in (301, 302))
+    check("employee goes straight to their own dashboard, skipping the roster",
+          r.status_code in (301, 302) and f"/active-time?dev={jane_id}" in r.headers.get("Location", ""))
+    own = emp.get("/active-time", follow_redirects=True).get_data(as_text=True)
+    check("employee sees their own time cards",
+          "Jane Doe" in own and "Actually spent working" in own and "Tickets worked" in own)
+    check("employee sees their own ticket", "RL-1" in own)
+    check("employee never sees a colleague's ticket", "RL-2" not in own)
+    check("employee never sees the developer picker",
+          "Select a Developer for Full Dashboard" not in own)
+    check("employee never sees the team's busiest tickets", "Busiest tickets" not in own)
+    check("employee gets no link back to the roster",
+          "Back to Time-Spent Dashboards" not in own)
+
+    sam_id = next(d["id"] for d in auth.all_developers() if d["name"] == "Sam Lee")
+    r2 = emp.get(f"/active-time?dev={sam_id}")
+    check("employee asking for a colleague is bounced to their own",
+          r2.status_code in (301, 302)
+          and f"/active-time?dev={jane_id}" in r2.headers.get("Location", ""))
+    check("a colleague's dashboard never renders for an employee",
+          "Sam Lee" not in emp.get(f"/active-time?dev={sam_id}",
+                                   follow_redirects=True).get_data(as_text=True))
+
+    check("employee nav offers Time-Spent Dashboards",
+          "/active-time" in emp.get("/my-day").get_data(as_text=True))
+    check("employee still blocked from the group screens",
+          all(emp.get(p).status_code in (301, 302, 403)
+              for p in ("/flow", "/quality", "/qa", "/attention", "/exec",
+                        "/my-day/rollup", "/reports/time-in-status")))
     check("employee keeps the screens they already had",
           emp.get("/my-day").status_code == 200)
+
+    # An employee whose link no longer resolves gets an explanation, not the roster.
+    auth.set_developer("jane@lifedatacorp.com")
+    stale = emp.get("/active-time", follow_redirects=True).get_data(as_text=True)
+    check("unlinked employee is told why, and still sees no roster",
+          "Jira developer" in stale
+          and "Select a Developer for Full Dashboard" not in stale
+          and "Busiest tickets" not in stale)
+    auth.set_developer("jane@lifedatacorp.com", developer="Jane Doe", developer_id=jane_id)
 
 
 def test_ticket_active_time_by_person():

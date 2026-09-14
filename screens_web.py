@@ -202,10 +202,12 @@ def page(body, active="", show_banner=True, **ctx):
     import auth
     user = auth.current_user()
     admin = bool(user and user.get("role") == "admin")
-    # Until the other screens are ready, employees only get My Day + Release;
-    # admins see everything. (Route access is also enforced server-side in
-    # app.py — this list only controls what the nav offers.)
-    items = list(NAV) if admin else [(h, l) for h, l in NAV if h in ("/my-day", "/release")]
+    # Until the other screens are ready, employees only get My Day, Release and
+    # their own Time-Spent dashboard; admins see everything. (Route access is
+    # also enforced server-side in app.py — this list only controls what the nav
+    # offers.)
+    items = list(NAV) if admin else [(h, l) for h, l in NAV
+                                     if h in ("/my-day", "/release", "/active-time")]
     navlinks = "".join(
         f'<a href="{href}" class="{"active" if href == active else ""}">{label}</a>'
         for href, label in items)
@@ -1623,6 +1625,20 @@ DEV_NOT_FOUND_TMPL = """
 """
 
 
+# An employee whose account isn't linked to a selectable Jira developer has no
+# time of their own to show, and must not fall through to the team roster.
+DEV_UNLINKED_TMPL = """
+<h1>Time Spent</h1>
+<div class="sub">We can't tell which Jira developer you are.</div>
+<div class="sectionbox">
+  <p class="muted">Time spent is drawn from the Jira account that did the work, so there's
+  nothing to show until your login is linked to a Jira developer that still appears in
+  the team's project. Ask an admin to check the link on your account.</p>
+  <a href="/my-day">← Back to My Day</a>
+</div>
+"""
+
+
 DEV_DASHBOARD_TMPL = """
 <h1>{{ dev_name }} <span style="font-weight:500;font-size:15px;color:var(--muted)">· Time Spent</span></h1>
 <div class="sub">{{ window_label }}</div>
@@ -1726,7 +1742,7 @@ DEV_DASHBOARD_TMPL = """
   {% endif %}
 {% else %}<div class="muted">No tickets in a working status {{ window_label }}.</div>{% endif %}
 </div>
-<div class="muted"><a href="/active-time">← Back to Time-Spent Dashboards</a></div>
+{% if not own_only %}<div class="muted"><a href="/active-time">← Back to Time-Spent Dashboards</a></div>{% endif %}
 """
 
 
@@ -1854,14 +1870,35 @@ def _dev_dashboard_data(dev_id):
 
 @v3.route("/active-time")
 def time_spent_screen():
+    import auth
+    user = auth.current_user()
     dev_id = (request.args.get("dev") or "").strip()
+    if user and user.get("role") != "admin":
+        # Employees get their own dashboard and nothing else: no roster (which
+        # names the whole team and its busiest tickets), and no colleague's
+        # dashboard by hand-editing ?dev=. The developer comes from the account,
+        # not the URL, so the query string can't widen it.
+        own = (user.get("developer_id") or user.get("developer") or "").strip()
+        if not own:
+            return page(DEV_UNLINKED_TMPL, active="/active-time", show_banner=False)
+        if dev_id != own:
+            from urllib.parse import quote
+            return redirect("/active-time?dev=" + quote(own))
+        dev_id = own
     if not dev_id:
         return page(TIME_SPENT_TMPL, active="/active-time", show_banner=False,
                     **_landing_data())
+    own_only = bool(user and user.get("role") != "admin")
     ctx = _dev_dashboard_data(dev_id)
     if ctx is None:
-        return page(DEV_NOT_FOUND_TMPL, active="/active-time", show_banner=False)
-    return page(DEV_DASHBOARD_TMPL, active="/active-time", show_banner=False, **ctx)
+        # For an employee this means their linked developer isn't selectable any
+        # more (hidden in Settings, or no longer a current assignee). Sending
+        # them "back to Time-Spent Dashboards" would just bounce them here
+        # again, so give them the reason and a way out instead.
+        return page(DEV_UNLINKED_TMPL if own_only else DEV_NOT_FOUND_TMPL,
+                    active="/active-time", show_banner=False)
+    return page(DEV_DASHBOARD_TMPL, active="/active-time", show_banner=False,
+                own_only=own_only, **ctx)
 
 
 # ---------------------------------------------------------------------------
