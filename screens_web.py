@@ -11,8 +11,10 @@ presentation and wiring only.
 from __future__ import annotations
 
 import datetime as dt
+import json
 import secrets
 import threading
+from urllib.parse import quote
 
 from flask import Blueprint, Response, jsonify, redirect, render_template_string, request
 
@@ -108,6 +110,10 @@ CHROME_TOP = """
  .sectionbox{background:var(--white);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;margin-bottom:16px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
  .banner{background:var(--amber-t);border:1px solid #f0dcae;color:var(--amber);border-radius:var(--radius);padding:11px 16px;margin-bottom:16px;font-size:13px}
  .fresh{color:#9a9a9a;font-size:11px;text-align:right;margin:2px 0 10px}
+ .fresh a{color:#7a7c7a;text-decoration:underline}
+ .fresh .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#c9ab5e;margin-right:4px;vertical-align:middle;animation:freshpulse 1.4s infinite}
+ @keyframes freshpulse{0%,100%{opacity:1}50%{opacity:.35}}
+ .freshnew{display:none;position:fixed;left:50%;transform:translateX(-50%);bottom:22px;z-index:120;background:var(--green);color:#fff;font-size:13px;font-weight:600;padding:10px 18px;border-radius:999px;box-shadow:0 4px 18px rgba(0,0,0,.22);cursor:pointer;border:none}
  .filterbar{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;background:var(--white);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;margin-bottom:16px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
  .filterbar label{font-size:11px;color:var(--muted);font-weight:600}
  .filterbar input,.filterbar select{display:block;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;margin-top:3px;background:#fff;color:var(--ink)}
@@ -223,12 +229,80 @@ def page(body, active="", show_banner=True, **ctx):
                      f'<a href="/logout" style="color:#fff;text-decoration:underline">Log out</a></span>')
     chrome = CHROME_TOP.replace("{NAVLINKS}", navlinks) + _overlay()
     banner = unmapped_banner() if (show_banner and admin) else ""
-    fresh = dt.datetime.now().strftime("%H:%M")
-    shell = (chrome + '<div class="wrap">'
-             + f'<div class="fresh">data as of {fresh} · cached ~5 min</div>'
+    shell = (chrome + '<div class="wrap">' + _freshness_bar()
              + banner + body + "</div>")
     _inject_filter_ctx(ctx, user, admin)
     return render_template_string(shell, request=request, st=st, **ctx)
+
+
+def _freshness_bar() -> str:
+    """The 'data as of' line, plus the watcher that closes the stale-data gap.
+
+    This used to print datetime.now(), i.e. the moment the page rendered, which
+    is never the age of the data: stale-while-revalidate serves the OLD value to
+    the request that discovers the entry is stale, and refreshes behind it. So
+    the first load after the TTL expires always showed yesterday's board under a
+    timestamp claiming it was current, and you only saw the change by loading
+    the page a second time.
+
+    Now the line reports the real pull time, and when a refresh is in flight the
+    page watches for the new timestamp and either reloads itself (if you have
+    tabbed away, so it is already current when you come back) or offers a button
+    (if you are looking at it, so nothing moves under you).
+    """
+    stat = jc.request_freshness()
+    if not stat:
+        # This screen read no cached Jira data (Settings, Users, an error page),
+        # so there is nothing to date and nothing to refresh.
+        return ""
+    token = stat["token"]
+    here = request.full_path.rstrip("?")
+    refresh_link = (f'<a href="/api/v2/refresh?next={quote(here, safe="")}'
+                    f'&keys={quote(token, safe="")}">Refresh</a>')
+    when = dt.datetime.fromtimestamp(stat["ts"]).strftime("%H:%M")
+    line = f'data as of {when} ({_fresh_age(stat["age"])})'
+    if stat["refreshing"]:
+        # A pull is in flight, so what is on screen is already superseded.
+        return (f'<div class="fresh" id="freshBar"><span class="dot"></span>'
+                f'{line} · refreshing now</div>' + _fresh_watcher(stat["ts"], token))
+    return f'<div class="fresh" id="freshBar">{line} · {refresh_link}</div>'
+
+
+def _fresh_age(secs: float) -> str:
+    if secs < 90:
+        return "just now" if secs < 30 else "1 min ago"
+    mins = int(secs // 60)
+    return f"{mins} min ago" if mins < 60 else f"{int(mins // 60)}h ago"
+
+
+def _fresh_watcher(ts: float, token: str) -> str:
+    """Poll for the background refresh to land. Only emitted when one is
+    actually in flight, and it stops the moment newer data arrives or after the
+    cap — an up-to-date page polls zero times. The endpoint reads a dict and
+    never touches Jira, so a check costs a few hundred bytes."""
+    return (
+        '<button class="freshnew" id="freshNew" type="button">Updated data available · Show it</button>'
+        "<script>(function(){"
+        f"var seen={json.dumps(ts)},tries=0,max=40,keys={json.dumps(token)};"
+        "var btn=document.getElementById('freshNew');"
+        "btn.addEventListener('click',function(){location.reload();});"
+        "function land(){"
+        # Tabbed away: reload now so it's already current when they come back —
+        # the exact thing people were doing by hand.
+        "  if(document.hidden){location.reload();return;}"
+        "  btn.style.display='block';"
+        "}"
+        "function poll(){"
+        "  if(tries++>max)return;"
+        "  fetch('/api/v2/freshness?keys='+encodeURIComponent(keys),{cache:'no-store'})"
+        "   .then(function(r){return r.ok?r.json():null;})"
+        "   .then(function(d){"
+        "     if(d&&d.ts&&d.ts>seen+0.5){land();return;}"
+        "     setTimeout(poll,3000);"
+        "   }).catch(function(){setTimeout(poll,6000);});"
+        "}"
+        "setTimeout(poll,2500);"
+        "})();</script>")
 
 
 def _inject_filter_ctx(ctx, user, admin):
@@ -816,6 +890,37 @@ def feed_csv():
     rows = [[e.ts.strftime("%Y-%m-%d %H:%M"), e.kind, e.actor, e.issue.key,
              e.issue.summary, e.detail or f"{e.frm} → {e.to}"] for e in _feed_rows()]
     return csv_response(["When", "Type", "Actor", "Issue", "Summary", "Detail"], rows, "activity_feed.csv")
+
+
+@v3.route("/api/v2/freshness")
+def freshness_json():
+    """When the data behind a page was last pulled. Reads the cache dict and
+    never touches Jira, so the watcher can check cheaply while a refresh is in
+    flight. `keys` names the cache entries that page actually read, so the
+    Release page is dated by release data and My Day by the dev dataset."""
+    stat = jc.freshness_for_token(request.args.get("keys") or "")
+    if not stat:
+        return jsonify({"ts": 0, "stale": True, "refreshing": False})
+    return jsonify({"ts": stat["ts"], "stale": stat["stale"],
+                    "refreshing": stat["refreshing"]})
+
+
+@v3.route("/api/v2/refresh")
+def refresh_now():
+    """Ask for a fresh pull now, rather than waiting out the cache TTL.
+
+    Starts the refresh in the BACKGROUND and redirects straight back: clearing
+    the entry instead would make this page load block on a cold synchronous
+    fetch. The page we bounce to sees `refreshing` and watches for the new
+    timestamp, so the wait is visible and self-resolving. `keys` names what that
+    page read, so Refresh on the Release page re-pulls release data rather than
+    something it never showed."""
+    jc.force_refresh_token(request.args.get("keys") or "")
+    nxt = request.args.get("next") or "/my-day"
+    # Only ever bounce back into this app, never to a URL someone supplied.
+    if not nxt.startswith("/") or nxt.startswith("//"):
+        nxt = "/my-day"
+    return redirect(nxt)
 
 
 @v3.route("/api/v2/myday.json")
@@ -1902,7 +2007,6 @@ def time_spent_screen():
         if not own:
             return page(DEV_UNLINKED_TMPL, active="/active-time", show_banner=False)
         if dev_id != own:
-            from urllib.parse import quote
             return redirect("/active-time?dev=" + quote(own))
         dev_id = own
     if not dev_id:

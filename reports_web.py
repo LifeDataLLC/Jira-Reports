@@ -120,6 +120,10 @@ TOP = """
  .warn{background:#ffebe6;color:#bf2600}.ok{background:#e3fcef;color:#006644}
  .muted{color:#6b778c;font-size:12px}
  .sectionbox{background:#fff;border-radius:8px;padding:16px 18px;box-shadow:0 1px 3px rgba(9,30,66,.12);margin-bottom:16px}
+ .fresh{color:#9a9a9a;font-size:11px;text-align:right;margin:2px 0 10px}
+ .fresh a{color:#7a7c7a;text-decoration:underline}
+ .fresh .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#c9ab5e;margin-right:4px;vertical-align:middle}
+ .freshnew{display:none;position:fixed;left:50%;transform:translateX(-50%);bottom:22px;z-index:120;background:#1fa963;color:#fff;font-size:13px;font-weight:600;padding:10px 18px;border-radius:999px;box-shadow:0 4px 18px rgba(0,0,0,.22);cursor:pointer;border:none}
 </style>
 <nav>
  <span class="brand">LifeData Eng Reports</span>
@@ -140,7 +144,12 @@ BOT = "</div>"
 
 
 def page(body, **ctx):
-    return render_template_string(TOP + body + BOT, fmt=fmt, cfg=cfg, **ctx)
+    # These legacy report pages keep their own shell, but they read Jira data
+    # like any other screen, so they get the same freshness bar rather than
+    # being the one corner of the app that silently shows stale numbers.
+    import screens_web   # local: screens_web imports this module
+    return render_template_string(TOP + screens_web._freshness_bar() + body + BOT,
+                                  fmt=fmt, cfg=cfg, **ctx)
 
 
 # ---------------------------------------------------------------------------

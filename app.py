@@ -79,8 +79,18 @@ _ADMIN_PREFIXES = ("/settings", "/admin", "/my-day/rollup", "/my-day/feed")
 # dashboard and refuses any other ?dev=. That check lives in the route rather
 # than here because the screen takes its developer from the URL instead of
 # being scoped by parse_filters like the other screens.
+# /api/v2/freshness + /api/v2/refresh back the "data as of" bar on every screen,
+# so they have to be reachable by whoever can see any screen at all.
 _EMPLOYEE_PREFIXES = ("/my-day", "/release", "/active-time",
-                      "/api/v2/ticket-history", "/change-password", "/logout")
+                      "/api/v2/ticket-history", "/api/v2/freshness",
+                      "/api/v2/refresh", "/change-password", "/logout")
+
+
+@app.before_request
+def _begin_cache_trace():
+    """Record which cached Jira fetches serve this request, so the freshness bar
+    can report the age of the data actually on the page (see jc.begin_trace)."""
+    jc.begin_trace()
 
 
 @app.before_request

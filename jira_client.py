@@ -204,8 +204,10 @@ def _cached(fn):
         with _cache_lock:
             hit = _cache_store.get(key)
         if hit:
-            if now - hit[0] >= CACHE_TTL:
+            stale = now - hit[0] >= CACHE_TTL
+            if stale:
                 _refresh_async(fn, args, kwargs, key)  # serve stale, refresh behind
+            _trace_add(key, hit[0], stale)
             return hit[1]
         with _cache_lock:
             gen = _cache_gen
@@ -215,11 +217,141 @@ def _cached(fn):
             if _cache_gen != gen:  # cache cleared mid-fetch: serve but don't store
                 return result
             _cache_store[key] = (ts, result)
+        _trace_add(key, ts, False)
         # persist off-thread so the waiting request isn't delayed by disk I/O
         threading.Thread(target=_persist_entry, args=(key, ts, result),
                          daemon=True).start()
         return result
     return wrapper
+
+
+_trace_local = threading.local()
+
+
+def begin_trace() -> None:
+    """Start recording which cached fetches serve the current request.
+
+    The freshness bar has to describe the data actually ON the page, and
+    different screens read different datasets: My Day reads the dev dataset,
+    the Release page reads project versions plus one version's issues. Reporting
+    a fixed fetch would put an unrelated timestamp on half the screens, which is
+    the exact dishonesty the bar exists to remove."""
+    _trace_local.trace = {}
+
+
+def _trace_add(key, ts: float, refreshing: bool) -> None:
+    tr = getattr(_trace_local, "trace", None)
+    if tr is not None:
+        tr[key] = (ts, refreshing)
+
+
+def _encode_keys(keys) -> str:
+    return json.dumps([[k[0], list(k[1]), dict(k[2])] for k in keys],
+                      separators=(",", ":"))
+
+
+def _decode_keys(token: str) -> list:
+    try:
+        raw = json.loads(token)
+    except (TypeError, ValueError):
+        return []
+    out = []
+    for e in raw if isinstance(raw, list) else []:
+        try:
+            fn, args, kwargs = e
+            out.append((str(fn), tuple(args), tuple(sorted(dict(kwargs).items()))))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _freshness_of(keys) -> dict | None:
+    """Oldest of several cache entries: a page is only as fresh as its stalest
+    input, so the bar reports the worst one rather than the most flattering."""
+    now = time.time()
+    found = []
+    with _cache_lock:
+        for key in keys:
+            hit = _cache_store.get(key)
+            if hit:
+                found.append((hit[0], key in _refreshing))
+    if not found:
+        return None
+    ts = min(f[0] for f in found)
+    age = max(now - ts, 0.0)
+    return {"ts": ts, "age": age, "stale": CACHE_TTL > 0 and age >= CACHE_TTL,
+            "refreshing": any(f[1] for f in found), "ttl": CACHE_TTL}
+
+
+def request_freshness() -> dict | None:
+    """Freshness of the data this request actually read, plus a `token` naming
+    those entries so the page's Refresh control and watcher act on the same
+    ones rather than on a guess."""
+    tr = getattr(_trace_local, "trace", None)
+    if not tr:
+        return None
+    stat = _freshness_of(tr.keys())
+    if stat:
+        stat["token"] = _encode_keys(tr.keys())
+    return stat
+
+
+def freshness_for_token(token: str) -> dict | None:
+    """Freshness of the entries named by a token from request_freshness()."""
+    return _freshness_of(_decode_keys(token))
+
+
+def force_refresh_token(token: str) -> int:
+    """Background-refresh every entry named by the token. Unknown or uncached
+    keys are ignored by force_refresh, so a hand-edited token can only ever
+    re-pull something already cached, never invent a new Jira query."""
+    return sum(1 for key in _decode_keys(token)
+               if force_refresh(key[0], *key[1], **dict(key[2])))
+
+
+def cache_status(fn_name: str, *args, **kwargs) -> dict | None:
+    """Freshness of one cached fetch, or None if nothing is cached for it yet.
+
+    The screens need this to tell the truth about what they are showing. Under
+    stale-while-revalidate the request that DISCOVERS a stale entry is served
+    the old value, so the moment a page renders is never the age of the data on
+    it. `ts` is when the data was actually pulled; `refreshing` means a
+    background fetch is in flight and a newer `ts` is coming shortly.
+    """
+    if CACHE_TTL <= 0:
+        return {"ts": time.time(), "age": 0.0, "stale": False,
+                "refreshing": False, "ttl": 0}
+    key = (fn_name, args, tuple(sorted(kwargs.items())))
+    with _cache_lock:
+        hit = _cache_store.get(key)
+        refreshing = key in _refreshing
+    if not hit:
+        return None
+    age = max(time.time() - hit[0], 0.0)
+    return {"ts": hit[0], "age": age, "stale": age >= CACHE_TTL,
+            "refreshing": refreshing, "ttl": CACHE_TTL}
+
+
+def force_refresh(fn_name: str, *args, **kwargs) -> bool:
+    """Start a background refresh of one cached fetch even while it is fresh.
+
+    Backs the Refresh control: someone who just moved a ticket in Jira should
+    not have to wait out the TTL to see it. Deliberately does NOT clear the
+    entry — dropping it would make the next page load block on a cold
+    synchronous pull. The stale value keeps being served until the refresh
+    lands, and the page watches `cache_status` for the new timestamp.
+    Returns False when there is nothing cached to refresh, in which case the
+    next request fetches synchronously anyway.
+    """
+    fn = _cached_fns.get(fn_name)
+    if fn is None or CACHE_TTL <= 0:
+        return False
+    key = (fn_name, args, tuple(sorted(kwargs.items())))
+    with _cache_lock:
+        if key not in _cache_store:
+            return False
+    _refresh_async(fn, args, kwargs, key)
+    return True
 
 
 def clear_cache() -> None:

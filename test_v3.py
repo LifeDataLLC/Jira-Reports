@@ -182,6 +182,157 @@ def test_checklist():
     check("rollup signal", r2["total"] == 1 and r2["signaled"] == 1 and r2["pct"] == 100)
 
 
+def test_data_freshness_bar_and_refresh():
+    """The 'data as of' bar, the refresh control, and the stale-data watcher.
+
+    The bar used to print datetime.now(), so it always claimed the data was
+    current even while serving a value minutes old. That is what made a status
+    change in Jira look like it randomly failed to appear: under
+    stale-while-revalidate the first load after the TTL is served the OLD value
+    and refreshes behind it, so you only saw the change on a second load."""
+    import app, jira_client as jc
+    import time as _time
+
+    calls = []
+
+    # A developer of this test's own, so linking the employee fixture below
+    # can't claim one another test needs (a developer links to one account).
+    ticket = mkraw("FRESH-1", "Development / In Design", "In Progress",
+                   assignee="Fresh Tester")
+
+    @jc._cached
+    def fetch_dev_dataset(project=None, lookback_days=None):   # noqa: F811
+        calls.append(project)
+        return [ticket]
+
+    real = jc.fetch_dev_dataset
+    jc.fetch_dev_dataset = fetch_dev_dataset
+    try:
+        jc.clear_cache()
+        check("no status before anything is cached",
+              jc.cache_status("fetch_dev_dataset", "LIFEDATAV2") is None)
+        check("nothing to force-refresh when cold",
+              jc.force_refresh("fetch_dev_dataset", "LIFEDATAV2") is False)
+
+        fetch_dev_dataset("LIFEDATAV2")
+        st_ = jc.cache_status("fetch_dev_dataset", "LIFEDATAV2")
+        check("status reports a real pull time", st_ and st_["ts"] > 0)
+        check("fresh entry is not stale", st_["stale"] is False and st_["age"] < 5)
+
+        # Age the entry past the TTL without waiting out five real minutes.
+        key = ("fetch_dev_dataset", ("LIFEDATAV2",), ())
+        with jc._cache_lock:
+            _ts, val = jc._cache_store[key]
+            jc._cache_store[key] = (_time.time() - jc.CACHE_TTL - 60, val)
+        st_ = jc.cache_status("fetch_dev_dataset", "LIFEDATAV2")
+        check("aged entry reads stale", st_["stale"] is True)
+        check("stale age is reported honestly", st_["age"] > jc.CACHE_TTL)
+
+        # force_refresh must NOT drop the entry — that would make the next page
+        # load block on a cold synchronous fetch.
+        before = len(calls)
+        check("force_refresh starts a pull", jc.force_refresh("fetch_dev_dataset", "LIFEDATAV2"))
+        for _ in range(50):
+            if len(calls) > before:
+                break
+            _time.sleep(0.02)
+        check("force_refresh actually fetched", len(calls) > before)
+        for _ in range(50):
+            if not jc.cache_status("fetch_dev_dataset", "LIFEDATAV2")["stale"]:
+                break
+            _time.sleep(0.02)
+        check("refresh lands and the timestamp advances",
+              jc.cache_status("fetch_dev_dataset", "LIFEDATAV2")["stale"] is False)
+
+        jc.detect_custom_fields = lambda: {"story_points": None, "sprint": None,
+                                           "start_date": None}
+        c = login_admin(app.app.test_client())
+        h = c.get("/my-day").get_data(as_text=True)
+        check("bar reports the pull time, not render time", "data as of" in h)
+        check("bar offers a refresh control", "/api/v2/refresh" in h)
+        check("refresh control names what this page read",
+              "fetch_dev_dataset" in h)
+        check("fresh page emits no watcher", "freshNew" not in h)
+        # A screen that reads no Jira data says nothing rather than dating
+        # itself off some other page's cache entry.
+        check("a dataless screen shows no freshness bar",
+              "data as of" not in c.get("/change-password").get_data(as_text=True))
+
+        tok = jc._encode_keys([("fetch_dev_dataset", ("LIFEDATAV2",), ())])
+        from urllib.parse import quote as _q
+        j = c.get("/api/v2/freshness?keys=" + _q(tok, safe="")).get_json()
+        check("freshness endpoint reports the timestamp", j["ts"] > 0)
+        check("freshness endpoint reports staleness", j["stale"] is False)
+        check("freshness of an unknown key reports nothing cached",
+              c.get("/api/v2/freshness?keys=" + _q(
+                  jc._encode_keys([("fetch_dev_dataset", ("NOPE",), ())]), safe="")
+              ).get_json()["ts"] == 0)
+        check("a malformed token is ignored, not fatal",
+              c.get("/api/v2/freshness?keys=not-json").get_json()["ts"] == 0)
+
+        # The bar must date each screen by the data that screen actually read,
+        # or the Release page (which never touches the dev dataset) would show
+        # My Day's timestamp and Refresh would re-pull the wrong thing.
+        jc.begin_trace()
+        jc.fetch_dev_dataset("LIFEDATAV2")
+        traced = jc.request_freshness()
+        check("trace dates the request by what it read",
+              traced and "fetch_dev_dataset" in traced["token"])
+        jc.begin_trace()
+        check("a request that read nothing has no freshness",
+              jc.request_freshness() is None)
+
+        r = c.get("/api/v2/refresh?next=%2Fmy-day")
+        check("refresh redirects back where you were",
+              r.status_code == 302 and r.headers["Location"].endswith("/my-day"))
+        r = c.get("/api/v2/refresh?next=https%3A%2F%2Fevil.example%2Fx")
+        check("refresh refuses an off-site next",
+              r.headers["Location"].endswith("/my-day"))
+        r = c.get("/api/v2/refresh?next=%2F%2Fevil.example%2Fx")
+        check("refresh refuses a protocol-relative next",
+              r.headers["Location"].endswith("/my-day"))
+
+        # A stale page must emit the watcher so the pending refresh is visible.
+        with jc._cache_lock:
+            _ts, val = jc._cache_store[key]
+            jc._cache_store[key] = (_time.time() - jc.CACHE_TTL - 60, val)
+            jc._refreshing.add(key)
+        try:
+            h = c.get("/my-day").get_data(as_text=True)
+            check("stale page says it is refreshing", "refreshing now" in h)
+            check("stale page emits the watcher", "freshNew" in h
+                  and "/api/v2/freshness" in h)
+        finally:
+            with jc._cache_lock:
+                jc._refreshing.discard(key)
+
+        # Employees see the bar on every screen, so both endpoints must be open
+        # to them or the watcher 403s (or silently redirects) on every poll.
+        import auth
+        ce = app.app.test_client()
+        if not auth.get_user("fresh-emp@lifedatacorp.com"):
+            # Employees must be linked to a developer to be created at all.
+            who = next(d for d in auth.all_developers() if d["name"] == "Fresh Tester")
+            ce.post("/register", data={"email": "fresh-emp@lifedatacorp.com",
+                                       "password": "secret123",
+                                       "developer_id": who["id"],
+                                       "developer_name": who["name"]})
+        else:
+            ce.post("/login", data={"email": "fresh-emp@lifedatacorp.com",
+                                    "password": "secret123"})
+        check("the freshness fixture really is an employee",
+              auth.get_user("fresh-emp@lifedatacorp.com")["role"] != "admin")
+        rf = ce.get("/api/v2/freshness?keys=" + _q(tok, safe=""))
+        check("employee can read freshness",
+              rf.status_code == 200 and rf.get_json()["ts"] > 0)
+        rr = ce.get("/api/v2/refresh?next=%2Fmy-day")
+        check("employee can trigger a refresh",
+              rr.status_code == 302 and rr.headers["Location"].endswith("/my-day"))
+    finally:
+        jc.fetch_dev_dataset = real
+        jc.clear_cache()
+
+
 def test_my_day_finished_and_handed_off():
     """The 'Include work I finished or handed off' toggle (My Day).
 
