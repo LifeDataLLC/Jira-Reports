@@ -71,10 +71,10 @@ class DevIssue:
     labels: list
     sprints: list                          # [{"name","state","end"}]
     status_events: list                    # [(ts, author, author_id, from, to)]
-    assignee_events: list                  # [(ts, author, from, to)]
+    assignee_events: list                  # [(ts, author, author_id, from, to)]
     comments: list                         # [{"ts","author","author_id","text"}]
     worklogs: list                         # [{"ts","author","author_id","seconds","note"}]
-    field_events: list = field(default_factory=list)  # [(ts, author, kind, from, to)]
+    field_events: list = field(default_factory=list)  # [(ts, author, author_id, kind, from, to)]
     start_date: dt.date | None = None
     fix_versions: list = field(default_factory=list)   # release names (fixVersion)
     timeline: A.Timeline = None
@@ -148,11 +148,11 @@ def load_dev_issues(raw_list, custom_fields=None) -> list[DevIssue]:
                     status_events.append((ts, author, author_id,
                                           item.get("fromString") or "", item.get("toString") or ""))
                 elif fname == "assignee":
-                    assignee_events.append((ts, author,
+                    assignee_events.append((ts, author, author_id,
                                             item.get("fromString") or "", item.get("toString") or ""))
                 elif fname in _FIELD_KINDS or (start_field and item.get("fieldId") == start_field):
                     kind = _FIELD_KINDS.get(fname, "startdate")
-                    field_events.append((ts, author, kind,
+                    field_events.append((ts, author, author_id, kind,
                                          item.get("fromString") or "", item.get("toString") or ""))
         status_events.sort(key=lambda e: e[0])
         assignee_events.sort(key=lambda e: e[0])
@@ -291,7 +291,7 @@ def daily_activity(issues, developer=None, start=None, end=None):
             if _in_range(ts, start, end) and _dev_match(developer, author, aid):
                 rows.append((ts, ["", "Status change", author, i.key_cell(), i.summary,
                                   i.type, i.status, f"{frm or '—'} → {to}"]))
-        for ts, author, frm, to in i.assignee_events:
+        for ts, author, _aid, frm, to in i.assignee_events:
             if _in_range(ts, start, end) and _dev_match(developer, author):
                 rows.append((ts, ["", "Assignee change", author, i.key_cell(), i.summary,
                                   i.type, i.status, f"{frm or 'Unassigned'} → {to or 'Unassigned'}"]))
@@ -667,7 +667,7 @@ def ticket_timeline(issues, issue_key=None, developer=None, start=None, end=None
     events = []
     for ts, author, aid, frm, to in match.status_events:
         events.append((ts, ["", "Status change", author, frm or "—", to, ""]))
-    for ts, author, frm, to in match.assignee_events:
+    for ts, author, _aid, frm, to in match.assignee_events:
         events.append((ts, ["", "Assignee change", author, frm or "Unassigned",
                             to or "Unassigned", ""]))
     for c in match.comments:

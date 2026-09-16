@@ -35,8 +35,8 @@ def events_for(issue) -> list[Event]:
     out = []
     for ts, author, aid, frm, to in issue.status_events:
         out.append(Event(ts, "status", author, aid, issue, frm, to))
-    for ts, author, frm, to in issue.assignee_events:
-        out.append(Event(ts, "assignee", author, "", issue,
+    for ts, author, aid, frm, to in issue.assignee_events:
+        out.append(Event(ts, "assignee", author, aid, issue,
                          frm or "Unassigned", to or "Unassigned"))
     for c in issue.comments:
         out.append(Event(c["ts"], "comment", c["author"], c["author_id"], issue,
@@ -44,8 +44,8 @@ def events_for(issue) -> list[Event]:
     for w in issue.worklogs:
         out.append(Event(w["ts"], "worklog", w["author"], w["author_id"], issue,
                          detail=w["note"], seconds=w["seconds"]))
-    for ts, author, kind, frm, to in issue.field_events:
-        out.append(Event(ts, kind, author, "", issue, frm, to))
+    for ts, author, aid, kind, frm, to in issue.field_events:
+        out.append(Event(ts, kind, author, aid, issue, frm, to))
     out.sort(key=lambda e: e.ts)
     return out
 

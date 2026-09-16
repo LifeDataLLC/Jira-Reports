@@ -134,7 +134,7 @@ def test_field_events():
         (1, "Jane Doe", "Sprint", "", "Sprint 11"),
     ])
     i = dr.load_dev_issues([raw])[0]
-    kinds = [k for _t, _a, k, _f, _to in i.field_events]
+    kinds = [k for _t, _a, _aid, k, _f, _to in i.field_events]
     check("field events extracted", kinds == ["duedate", "startdate", "flag", "sprint"])
     import activity
     ev = activity.events_for(i)
@@ -180,6 +180,78 @@ def test_checklist():
                    comments=[(0, 0, "Jane Doe", "eod update")])
     r2 = checklist.rollup(dr.load_dev_issues([active]), today, now=now)
     check("rollup signal", r2["total"] == 1 and r2["signaled"] == 1 and r2["pct"] == 100)
+
+
+def test_my_day_finished_and_handed_off():
+    """The 'Include work I finished or handed off' toggle (My Day).
+
+    Both endings of a day's work leave the workload by design: finishing a
+    ticket drops it into the done bucket, handing one off drops the assignee
+    match. A QA engineer's tickets nearly always end one of those two ways, so
+    with the toggle off a fully productive day can render as an empty board."""
+    import app, checklist, dev_reports as dr, settings as st
+    import jira_client as jc
+    sset = st.load()
+    sset["gates"]["due_dates_required"] = False
+    st.save(sset)
+    today = now.date()
+
+    live = mkraw("F-1", "Development / In Design", "In Progress",
+                 comments=[(0, 10, "Jane Doe", "still going")])
+    # Finished today: she walked it to Done herself.
+    done = mkraw("F-2", "Done", "Done", events=[
+        (0, "Jane Doe", "status", "In QA Testing (QA Env)", "Done")])
+    # Handed off today: still in a live status, but no longer hers. The ONLY
+    # trace she touched it is the assignee change, which edited_in_range ignores.
+    handed = mkraw("F-3", "Pause QA Testing", "To Do", assignee="Sam Lee", events=[
+        (0, "Jane Doe", "assignee", "Jane Doe", "Sam Lee")])
+    # Somebody else's ticket she never touched must stay out either way.
+    theirs = mkraw("F-4", "Done", "Done", assignee="Sam Lee", events=[
+        (0, "Sam Lee", "status", "In QA Testing (QA Env)", "Done")])
+    issues = dr.load_dev_issues([live, done, handed, theirs])
+
+    off = checklist.my_day(issues, "janedoe", today, today, dr.dev_match_exact, now=now)
+    check("toggle off keeps the workload model",
+          [r["issue"].key for r in off["rows"]] == ["F-1"])
+
+    on = checklist.my_day(issues, "janedoe", today, today, dr.dev_match_exact,
+                          now=now, include_finished=True)
+    keys = [r["issue"].key for r in on["rows"]]
+    check("toggle on adds finished work", "F-2" in keys)
+    check("toggle on adds handed-off work", "F-3" in keys)
+    check("toggle on never adds a colleague's ticket", "F-4" not in keys)
+    check("live work still sorts above the record", keys[0] == "F-1")
+
+    rows = {r["issue"].key: r for r in on["rows"]}
+    check("finished row is labelled", rows["F-2"]["record"] == "Finished")
+    check("handed-off row names the recipient",
+          rows["F-3"]["record"] == "Handed to Sam Lee")
+    check("live row carries no record label", rows["F-1"]["record"] == "")
+    # The point of the neutral checks: completed work must not invent red items.
+    check("record rows raise no failures",
+          rows["F-2"]["fails"] == 0 and rows["F-3"]["fails"] == 0
+          and all(c[2] == "na" for c in rows["F-2"]["checks"]))
+    check("record rows excluded from total_fails", on["total_fails"] == off["total_fails"])
+
+    # Whole-workload mode is about what's still open and still theirs.
+    both = checklist.my_day(issues, "janedoe", today, today, dr.dev_match_exact,
+                            now=now, show_all=True, include_finished=True)
+    check("show_all ignores the toggle",
+          [r["issue"].key for r in both["rows"]] == ["F-1"])
+
+    c = login_admin(app.app.test_client())
+    jc.fetch_dev_dataset = lambda project=None, lookback_days=None: [live, done, handed, theirs]
+    jc.detect_custom_fields = lambda: {"story_points": None, "sprint": None, "start_date": None}
+    h = c.get("/my-day?developer=janedoe").get_data(as_text=True)
+    check("screen offers the toggle", "Include work I finished or handed off" in h)
+    check("screen hides finished work by default", "F-2" not in h)
+    hf = c.get("/my-day?developer=janedoe&finished=1").get_data(as_text=True)
+    check("screen shows finished work when asked", "F-2" in hf and "F-3" in hf)
+    check("screen labels the record rows", "Handed to Sam Lee" in hf)
+    check("screen counts outcomes separately", "finished or handed off" in hf)
+    j = c.get("/api/v2/myday.json?developer=janedoe&finished=1").get_json()
+    check("json exposes the record label",
+          {r["key"]: r["record"] for r in j["rows"]}.get("F-3") == "Handed to Sam Lee")
 
 
 def test_attention():

@@ -138,6 +138,9 @@ CHROME_TOP = """
  .md-card.clean{border-left-color:var(--green)}
  .md-card.attention{border-left-color:var(--red)}
  .md-card.active-now{box-shadow:0 0 0 3px var(--green-t),0 3px 12px rgba(31,169,99,.18)}
+ .md-card.record{border-left-color:#c3ccc6;background:#fcfdfc}
+ .md-card.record .md-title a{color:var(--ink2)}
+ .md-rec{background:#eef1ef;color:var(--ink2);font-weight:700}
  .md-ribbon{display:inline-flex;align-items:center;gap:7px;background:var(--green);color:#fff;font-size:11px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;padding:4px 11px;border-radius:999px;margin-bottom:9px}
  .md-ribbon .live{width:7px;height:7px;border-radius:50%;background:#fff;animation:mdpulse 1.5s infinite}
  @keyframes mdpulse{0%{box-shadow:0 0 0 0 rgba(255,255,255,.7)}70%{box-shadow:0 0 0 6px rgba(255,255,255,0)}100%{box-shadow:0 0 0 0 rgba(255,255,255,0)}}
@@ -594,24 +597,32 @@ MYDAY_TMPL = """
   <label style="display:flex;flex-direction:row;align-items:center;gap:6px;font-size:13px;color:var(--ink);font-weight:500;align-self:flex-end;padding-bottom:7px">
     <input type="checkbox" name="all" value="1" style="width:auto;margin:0;padding:0;box-shadow:none" {% if show_all %}checked{% endif %} onchange="this.form.submit()"> Show all assigned tickets
   </label>
+  <label style="display:flex;flex-direction:row;align-items:center;gap:6px;font-size:13px;color:var(--ink);font-weight:500;align-self:flex-end;padding-bottom:7px">
+    <input type="checkbox" name="finished" value="1" style="width:auto;margin:0;padding:0;box-shadow:none" {% if include_finished %}checked{% endif %} {% if show_all %}disabled title="Not used while showing all assigned tickets"{% endif %} onchange="this.form.submit()"> Include work I finished or handed off
+  </label>
   <noscript><button class="btn" type="submit">Apply</button></noscript>
 </form>
 {% if not selected_dev %}
 <div class="sectionbox"><p class="muted">{% if is_admin %}Select a developer above to see their checklist.{% else %}Your account isn't linked to a developer, so there's nothing to show. Ask an admin to link it.{% endif %}</p></div>
 {% endif %}
 {% if d %}
-{% set total = d.rows|length %}
-{% set clean = d.rows|selectattr('fails','equalto',0)|list|length %}
-{% set stale = d.rows|selectattr('stale')|list|length %}
-{% set active = d.rows|selectattr('active')|list|length %}
-{% if total %}
+{% set live = d.rows|rejectattr('record')|list %}
+{% set outcomes = d.rows|selectattr('record')|list %}
+{% set total = live|length %}
+{% set clean = live|selectattr('fails','equalto',0)|list|length %}
+{% set stale = live|selectattr('stale')|list|length %}
+{% set active = live|selectattr('active')|list|length %}
+{% if d.rows %}
 <div class="md-summary">
-  <div class="md-progress"><div class="md-progress-bar" style="width:{{ (100*clean/total)|round|int }}%"></div></div>
+  {% if total %}<div class="md-progress"><div class="md-progress-bar" style="width:{{ (100*clean/total)|round|int }}%"></div></div>{% endif %}
   <div class="md-summary-text">
+    {% if total %}
     <span><span class="big">{{ clean }}</span> / {{ total }} tickets up to date</span>
     <span class="md-kpi"><span class="dot" style="background:#d64545"></span>{{ total-clean }} need attention</span>
     <span class="md-kpi"><span class="dot" style="background:#b7791f"></span>{{ stale }} stale</span>
     <span class="md-kpi"><span class="dot" style="background:#1fa963"></span>{{ active }} active now</span>
+    {% endif %}
+    {% if outcomes %}<span class="md-kpi"><span class="dot" style="background:#9aa8a0"></span>{{ outcomes|length }} finished or handed off</span>{% endif %}
   </div>
 </div>
 {% endif %}
@@ -630,12 +641,13 @@ MYDAY_TMPL = """
 </div>
 <div id="mdCards">
 {% for r in d.rows %}
-<div class="md-card mdcard {{ 'clean' if r.fails == 0 else 'attention' }}{{ ' active-now' if r.active else '' }}" data-fail="{{ r.fail_ids|join(',') }}" data-stale="{{ 1 if r.stale else 0 }}" data-active="{{ 1 if r.active else 0 }}">
-  {% if r.active %}<span class="md-ribbon"><span class="live"></span>⚡ Working now{% if r.lane %} · {{ r.lane }}{% endif %}{% if r.active_for %} · active {{ r.active_for }}{% endif %}</span>{% endif %}
+<div class="md-card mdcard {{ 'record' if r.record else ('clean' if r.fails == 0 else 'attention') }}{{ ' active-now' if r.active and not r.record else '' }}" data-fail="{{ r.fail_ids|join(',') }}" data-stale="{{ 1 if r.stale and not r.record else 0 }}" data-active="{{ 1 if r.active and not r.record else 0 }}">
+  {% if r.active and not r.record %}<span class="md-ribbon"><span class="live"></span>⚡ Working now{% if r.lane %} · {{ r.lane }}{% endif %}{% if r.active_for %} · active {{ r.active_for }}{% endif %}</span>{% endif %}
   <div class="md-head">
     <div class="md-title"><a href="{{ r.issue.url }}" target="_blank">{{ r.issue.key }}</a> {{ r.issue.summary }}{% if r.last_activity_str %} <span class="muted" style="font-weight:400">· {{ r.last_activity_str }}</span>{% endif %}</div>
     <div class="md-tags">
-      {% if r.stale %}<span class="pill bad" title="No status change in {{ r.stale_days }} days">⏳ stale {{ r.stale_days|round|int }}d</span>{% endif %}
+      {% if r.record %}<span class="pill md-rec">{{ r.record }}</span>{% endif %}
+      {% if r.stale and not r.record %}<span class="pill bad" title="No status change in {{ r.stale_days }} days">⏳ stale {{ r.stale_days|round|int }}d</span>{% endif %}
       <span class="pill">{{ r.issue.type }}</span>
       <span class="pill">{{ r.issue.status }}</span>
     </div>
@@ -696,15 +708,19 @@ def my_day_screen():
         selected_dev = own or ""
     start, end = _day_range_arg()
     show_all = request.args.get("all") == "1"
+    # Finished/handed-off work is the day's outcome, not the day's workload, so
+    # it stays opt-in — and it means nothing in whole-workload mode.
+    include_finished = request.args.get("finished") == "1" and not show_all
     _psel, scope = current_project_selection()
     d = (checklist.my_day(_issues(scope), selected_dev, start, end, dr.dev_match_exact,
-                          show_all=show_all)
+                          show_all=show_all, include_finished=include_finished)
          if selected_dev else None)
     # The comment check's label follows the selected window ("Comment today" /
     # "Comment on Jul 05" / "Comment in range") — keep the filter chips in step.
     labels = dict(checklist.CHECK_LABELS)
     labels["comment_today"] = checklist.comment_check_label(start, end)
     return page(MYDAY_TMPL, active="/my-day", d=d, g=gloss, show_all=show_all,
+                include_finished=include_finished,
                 is_admin=is_admin, dev_options=dev_options, selected_dev=selected_dev,
                 check_labels=[(cid, labels[cid]) for cid in checklist.CHECK_ORDER])
 
@@ -806,11 +822,15 @@ def feed_csv():
 def myday_json():
     project, developer, _s, _e = parse_filters()
     start, end = _day_range_arg()
+    show_all = request.args.get("all") == "1"
     d = checklist.my_day(_issues(project), developer, start, end, dr.dev_match_exact,
-                         show_all=request.args.get("all") == "1")
+                         show_all=show_all,
+                         include_finished=request.args.get("finished") == "1"
+                         and not show_all)
     return jsonify({"start": d["start"].isoformat(), "end": d["end"].isoformat(),
                     "total_fails": d["total_fails"],
                     "rows": [{"key": r["issue"].key, "fails": r["fails"],
+                              "record": r["record"],
                               "checks": [{"id": c, "label": l, "state": s, "why": w}
                                          for c, l, s, w in r["checks"]]} for r in d["rows"]]})
 

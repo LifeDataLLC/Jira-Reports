@@ -87,9 +87,9 @@ def ownership_spans(issue) -> list[tuple]:
     if not events:
         return [(issue.assignee, issue.created, end_cap)] if issue.created else []
     spans = []
-    cur = events[0][2] or "Unassigned"          # fromString of the first change
+    cur = events[0][3] or "Unassigned"          # fromString of the first change
     seg_start = issue.created or events[0][0]
-    for ts, _author, _frm, to in events:
+    for ts, _author, _aid, _frm, to in events:
         if ts >= seg_start:
             spans.append((cur, seg_start, ts))
         cur, seg_start = (to or "Unassigned"), ts

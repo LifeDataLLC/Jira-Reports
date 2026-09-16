@@ -77,17 +77,35 @@ def _days_in_current_status(issue, now=None):
 
 def _is_flagged(issue) -> bool:
     state = False
-    for _ts, _a, kind, _frm, to in issue.field_events:
+    for _ts, _a, _aid, kind, _frm, to in issue.field_events:
         if kind == "flag":
             state = bool(to.strip())
     return state or any(l.lower() in {x.lower() for x in st.load()["blocked_labels"]}
                         for l in issue.labels)
 
 
-def evaluate_ticket(issue, start: dt.date, end: dt.date | None = None, now=None) -> dict:
+def _acted_in_window(issue, developer, match, d0, d1) -> bool:
+    """True if `developer` authored any event on this ticket inside [d0, d1).
+
+    Assignment answers "is this on my plate"; authorship answers "did I work
+    it today". They diverge exactly when a ticket is handed off, which is how
+    most QA work ends, so the two questions need separate tests."""
+    if not (developer and match):
+        return False
+    return any(d0 <= e.ts < d1 and match(developer, e.actor, e.actor_id)
+               for e in activity.events_for(issue))
+
+
+def evaluate_ticket(issue, start: dt.date, end: dt.date | None = None, now=None,
+                    record: str = "") -> dict:
     """Checklist row for one ticket over a date window (end defaults to start, i.e.
     a single day). Returns {issue, bucket, checks: [(id,label,state,why)], fails,
-    eod_signal}."""
+    eod_signal}.
+
+    `record` marks a row as finished or handed-off work, shown for the day's
+    record rather than as something to act on. Its checks are forced to "na":
+    a ticket you closed this morning must not come back wearing a red "no
+    comment today", which would invent new failures out of completed work."""
     end = end or start
     s = st.load()
     gates, items = s["gates"], s["checklist_items"]
@@ -151,7 +169,9 @@ def evaluate_ticket(issue, start: dt.date, end: dt.date | None = None, now=None)
     last_activity = events[-1].ts if events else (issue.updated or issue.created)
 
     eod_signal = bool(window_events)
-    return {"issue": issue, "bucket": bucket, "checks": checks,
+    if record:
+        checks = [(cid, label, "na", record) for cid, label, _s, _w in checks]
+    return {"issue": issue, "bucket": bucket, "checks": checks, "record": record,
             "active": active,
             "lane": st.lane_label(issue.status),
             "active_for": _dur(dsc) if (active and dsc is not None) else "",
@@ -163,7 +183,7 @@ def evaluate_ticket(issue, start: dt.date, end: dt.date | None = None, now=None)
 
 
 def my_day(issues, developer, start: dt.date, end: dt.date, match, now=None,
-           show_all=False) -> dict:
+           show_all=False, include_finished=False) -> dict:
     """Checklist rows for one developer's open, assigned work: anything in an
     active status (currently working), paused, in the QA pipeline, or reopened.
     To Do and Done are excluded.
@@ -175,30 +195,58 @@ def my_day(issues, developer, start: dt.date, end: dt.date, match, now=None,
 
     With show_all=True the view instead lists EVERY open (non-done) ticket
     assigned to the developer — their whole workload, including To Do — ignoring
-    both the bucket and date filters, so they can eyeball the status of everything."""
+    both the bucket and date filters, so they can eyeball the status of everything.
+
+    With include_finished=True the window also picks up the day's OUTCOMES: work
+    the developer finished (now in a done status) or handed off (no longer theirs).
+    Both leave the workload by design, which is right for a to-do list and wrong
+    for "what did I do today" — a QA engineer's tickets nearly always end one of
+    those two ways, so without this their most productive day reads as an empty
+    board. These rows carry a `record` label and neutral checks (see
+    evaluate_ticket) so they read as a record, never as new work. Membership is
+    by AUTHORSHIP in the window, not assignment, because a handed-off ticket is
+    no longer assigned to the person who did the work."""
     d0, d1 = _range_bounds(start, end)
     rows = []
     for i in issues:
         b = st.bucket_of(i.status, i.category)
+        mine = not (developer and match) or match(developer, i.assignee, i.assignee_id)
         if show_all:
-            if b == "done" or i.category == "Done":
+            # Whole-workload mode is about what's still open and still theirs;
+            # finished/handed-off outcomes have no place in it.
+            if b == "done" or i.category == "Done" or not mine:
                 continue
+            rows.append(evaluate_ticket(i, start, end, now))
+            continue
         # Unmapped statuses in Jira's own In Progress category still appear so the
         # developer sees the "status classified" failure (never silently dropped).
-        elif b not in ("active_dev", "rework", "qa_stage", "paused") and not (
-                b is None and i.category == "In Progress"):
-            continue
-        if developer and match and not match(developer, i.assignee, i.assignee_id):
+        in_workload = b in ("active_dev", "rework", "qa_stage", "paused") or (
+            b is None and i.category == "In Progress")
+        record = ""
+        if not mine:
+            record = f"Handed to {i.assignee}" if i.assignee else "Handed off"
+        elif not in_workload:
+            record = "Finished" if b == "done" else ""
+            if not record:
+                continue
+        if record:
+            # Authorship in the window is a stricter test than edited_in_range:
+            # it proves THEY did it, and it catches the assignee-only change that
+            # edited_in_range ignores — the exact way a silent handoff vanishes.
+            if not (include_finished
+                    and _acted_in_window(i, developer, match, d0, d1)):
+                continue
+            rows.append(evaluate_ticket(i, start, end, now, record=record))
             continue
         r = evaluate_ticket(i, start, end, now)
-        if not show_all and not (r["active"] or activity.edited_in_range(i, d0, d1)):
+        if not (r["active"] or activity.edited_in_range(i, d0, d1)):
             continue
         rows.append(r)
-    # Tickets in an active status ("currently working") are pinned to the top;
-    # within each group, most recent action first (a handoff by anyone, or the
-    # developer's own work).
+    # Live work first, finished/handed-off rows last; within each group, most
+    # recent action first (a handoff by anyone, or the developer's own work).
     _min = dt.datetime.min.replace(tzinfo=dt.timezone.utc)
-    rows.sort(key=lambda r: (r["active"], r["last_activity"] or _min), reverse=True)
+    rows.sort(key=lambda r: (not r.get("record"), r["active"],
+                             r["last_activity"] or _min), reverse=True)
     return {"rows": rows, "start": start, "end": end,
             "total_fails": sum(r["fails"] for r in rows)}
 

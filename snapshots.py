@@ -45,7 +45,7 @@ def compute_aggregates(issues, now=None) -> dict:
         if st.bucket_of(i.status, i.category) == "done":
             continue
         state, ts = False, None
-        for ets, _a, kind, _f, to in i.field_events:
+        for ets, _a, _aid, kind, _f, to in i.field_events:
             if kind == "flag":
                 state = bool(to.strip())
                 ts = ets if state else None

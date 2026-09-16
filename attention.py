@@ -54,7 +54,7 @@ def _reasons_for(issue, now) -> list[dict]:
 
     # Blocked: Jira Flagged field primary; labels are low-confidence hints
     flag_state, flag_ts = False, None
-    for ts, _a, kind, _f, to in issue.field_events:
+    for ts, _a, _aid, kind, _f, to in issue.field_events:
         if kind == "flag":
             flag_state = bool(to.strip())
             flag_ts = ts if flag_state else None
